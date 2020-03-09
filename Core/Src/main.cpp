@@ -424,16 +424,52 @@ static void vTaskMusic(void *pvParameters)
 	  }
   }
 }
+#define AVI_VIDEO_BUF_SIZE    (60 * 1024)
+uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
+static int _GetData(void * p, const U8 ** ppData, unsigned NumBytesReq, U32 Off)
+{
+  unsigned int NumBytesRead;
+  FRESULT res;
+
+  if(Off != 0xFFFFFFFF)
+  {
+    /* Set file pointer to the required position */
+    f_lseek((FIL *)p, Off);
+  }
+
+  /* Read data into buffer */
+  res = f_read((FIL *)p, (U8 *)FrameBuffer, NumBytesReq, &NumBytesRead);
+
+  if((res != FR_OK) ||( NumBytesRead == 0))
+  {
+    NumBytesRead = 0;
+  }
+  *ppData = FrameBuffer;
+  /* Return number of available bytes */
+  return NumBytesRead;
+}
 
 void  vTaskGUI(void *pvParameters)
 {
-	MainTask();
+	if (f_mount(&fs,(char*)"",1) == FR_OK)
+	{
+		if (f_open(&fi, "/Jpeg/image.jpg", FA_READ) == FR_OK)
+		{
+			GUI_JPEG_DrawEx(_GetData, &fi, 0, 0);
+		}
+	}
+	while(1)
+	{
+		BSP_LED_Toggle(LED_RED);
+		vTaskDelay(2000);
+	}
+
 }
 //higher number, higher priority
 static void AppTaskCreate(void)
 {
   xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
-  xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
+  //xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
   xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 1, &xTaskGUI);
   xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
 
@@ -526,120 +562,120 @@ static void MPU_Config(void)
 }
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
-  /* USER CODE END 1 */
-	
+	/* USER CODE BEGIN 1 */
+	/* USER CODE END 1 */
 
+	
 	uint8_t SD_state = MSD_OK, res;
-
 	
+
 	uint32_t AlphaInvertConfig;
 
 
 	MPU_Config();
 	SCB_InvalidateICache();
 
-	  /* Enable branch prediction */
-	  SCB->CCR |= (1 <<18);
-	  __DSB();
+	/* Enable branch prediction */
+	SCB->CCR |= (1 <<18);
+	__DSB();
 
-	  /* Invalidate I-Cache : ICIALLU register*/
-	  SCB_InvalidateICache();
+	/* Invalidate I-Cache : ICIALLU register*/
+	SCB_InvalidateICache();
 
-	  /* Enable I-Cache */
-	  SCB_EnableICache();
+	/* Enable I-Cache */
+	SCB_EnableICache();
 
-	  SCB_InvalidateDCache();
-	  SCB_EnableDCache();
+	SCB_InvalidateDCache();
+	SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+	HAL_Init();
 
-  /* USER CODE BEGIN Init */
-  /* USER CODE END Init */
+	/* USER CODE BEGIN Init */
+	/* USER CODE END Init */
 
-  /* Configure the system clock */
-  SystemClock_Config();
+	/* Configure the system clock */
+	SystemClock_Config();
 
-  /* USER CODE BEGIN SysInit */
-  /* USER CODE END SysInit */
+	/* USER CODE BEGIN SysInit */
+	/* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */
-  /* Enable the CRC Module */
-  __HAL_RCC_CRC_CLK_ENABLE();
-	  MX_RTC_Init();
-	  //MPU_Config();
-
-
-	  /*##-1- JPEG Initialization ################################################*/
-	  /* Init The JPEG Color Look Up Tables used for YCbCr to RGB conversion   */
-
-	  /* Init the HAL JPEG driver */
-	   //JPEG_Handle.Instance = JPEG;
+	/* Initialize all configured peripherals */
+	/* Enable the CRC Module */
+	__HAL_RCC_CRC_CLK_ENABLE();
+	MX_RTC_Init();
+	//MPU_Config();
 
 
-	   DMAUartHandle.Instance				  = DMA2_Stream7;
-	   DMAUartHandle.Init.Channel             = DMA_CHANNEL_4;
-	   DMAUartHandle.Init.Direction           = DMA_MEMORY_TO_PERIPH;
-	   DMAUartHandle.Init.PeriphInc           = DMA_PINC_DISABLE;
-	   DMAUartHandle.Init.MemInc              = DMA_MINC_ENABLE;
-	   DMAUartHandle.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-	   DMAUartHandle.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
-	   DMAUartHandle.Init.Mode                = DMA_NORMAL;
-	   DMAUartHandle.Init.Priority            = DMA_PRIORITY_LOW;
-	   DMAUartHandle.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-	   HAL_DMA_Init(&DMAUartHandle);
+	/*##-1- JPEG Initialization ################################################*/
+	/* Init The JPEG Color Look Up Tables used for YCbCr to RGB conversion   */
 
-	   HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
-	   HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+	/* Init the HAL JPEG driver */
+	//JPEG_Handle.Instance = JPEG;
 
 
-	   	UartHandle.Instance        = USARTx;
-	    UartHandle.Init.BaudRate   = 9600;
-	    UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
-	    UartHandle.Init.StopBits   = UART_STOPBITS_1;
-	    UartHandle.Init.Parity     = UART_PARITY_ODD;
-	    UartHandle.Init.HwFlowCtl  = UART_HWCONTROL_NONE;
-	    UartHandle.Init.Mode       = UART_MODE_TX_RX;
-	    UartHandle.Init.OverSampling = UART_OVERSAMPLING_16;
-	    if (HAL_UART_Init(&UartHandle) != HAL_OK)
-	    {
-	      /* Initialization Error */
-	      Error_Handler();
-	    }
-	    __HAL_LINKDMA(&UartHandle, hdmatx, DMAUartHandle);
-	    /* Peripheral interrupt init*/
-	    HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
-	    HAL_NVIC_EnableIRQ(USART1_IRQn);
+	DMAUartHandle.Instance				  = DMA2_Stream7;
+	DMAUartHandle.Init.Channel             = DMA_CHANNEL_4;
+	DMAUartHandle.Init.Direction           = DMA_MEMORY_TO_PERIPH;
+	DMAUartHandle.Init.PeriphInc           = DMA_PINC_DISABLE;
+	DMAUartHandle.Init.MemInc              = DMA_MINC_ENABLE;
+	DMAUartHandle.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	DMAUartHandle.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
+	DMAUartHandle.Init.Mode                = DMA_NORMAL;
+	DMAUartHandle.Init.Priority            = DMA_PRIORITY_LOW;
+	DMAUartHandle.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+	HAL_DMA_Init(&DMAUartHandle);
 
-  /* USER CODE BEGIN 2 */
-	   // gif decode callback function set
-	    /* Initializes the SDRAM device */
-	    BSP_SDRAM_Init();
-		BSP_SD_Init();
-		BSP_LED_Init(LED1);
-		BSP_LED_Init(LED2);
-		BSP_LED_Init(LED3);
-		BSP_TS_Init (800, 480);
-		BSP_TS_ITConfig();
-		GUI_Init();
-		GUI_SetBkColor(GUI_WHITE);
-	  GUI_Clear();
-
-	  GUI_SetLayerVisEx (1, 0);
-	  GUI_SelectLayer(0);
-	  WM_SetCreateFlags(WM_CF_MEMDEV);
-	  WM_MULTIBUF_Enable(1);
-
-    AppTaskCreate();
+	HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+	HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
 
 
-    vTaskStartScheduler();
+	UartHandle.Instance        = USARTx;
+	UartHandle.Init.BaudRate   = 9600;
+	UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
+	UartHandle.Init.StopBits   = UART_STOPBITS_1;
+	UartHandle.Init.Parity     = UART_PARITY_ODD;
+	UartHandle.Init.HwFlowCtl  = UART_HWCONTROL_NONE;
+	UartHandle.Init.Mode       = UART_MODE_TX_RX;
+	UartHandle.Init.OverSampling = UART_OVERSAMPLING_16;
+	if (HAL_UART_Init(&UartHandle) != HAL_OK)
+	{
+	  /* Initialization Error */
+	  Error_Handler();
+	}
+	__HAL_LINKDMA(&UartHandle, hdmatx, DMAUartHandle);
+	/* Peripheral interrupt init*/
+	HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
+	HAL_NVIC_EnableIRQ(USART1_IRQn);
 
-    while(1);
-    
+	/* USER CODE BEGIN 2 */
+	// gif decode callback function set
+	/* Initializes the SDRAM device */
+	BSP_SDRAM_Init();
+	BSP_SD_Init();
+	BSP_LED_Init(LED1);
+	BSP_LED_Init(LED2);
+	BSP_LED_Init(LED3);
+	BSP_TS_Init (800, 480);
+	BSP_TS_ITConfig();
+	GUI_Init();
+	GUI_SetBkColor(GUI_WHITE);
+	GUI_Clear();
+
+	GUI_SetLayerVisEx (1, 0);
+	GUI_SelectLayer(0);
+	WM_SetCreateFlags(WM_CF_MEMDEV);
+	WM_MULTIBUF_Enable(1);
+
+	AppTaskCreate();
+
+
+	vTaskStartScheduler();
+
+	while(1);
+
 
 
     /* USER CODE BEGIN 3 */
