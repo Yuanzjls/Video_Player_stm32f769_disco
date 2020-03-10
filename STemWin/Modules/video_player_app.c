@@ -61,6 +61,7 @@
 /* Private define ------------------------------------------------------------*/
 #define DECODE_CONVERT_OUTPUT_BUFF    0x11
 #define JPEG_DATA_INPUT				  0x20
+#define JPEG_DATA_OUTPUT_FULL		  0x30
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 JPEG_YCbCrToRGB_Convert_Function pConvert_Function;
@@ -74,7 +75,7 @@ uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4];
 uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4] __attribute__((at(0x2000A000)));
 
 #elif defined ( __GNUC__ ) /* GNU Compiler */
-uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4] __attribute__((section(".MCU_Data_section")));
+uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4 * 2] __attribute__((section(".MCU_Data_section")));
 #endif
 extern uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
 extern GUI_AVI_HANDLE havi;
@@ -82,8 +83,29 @@ static uint32_t MCU_BlockIndex = 0;
 osThreadId hOutputThread;
 static osMessageQId OutputEvent = 0;
 uint32_t MCU_TotalNb = 0, IsFirstTime = 0;
-static uint32_t OutputLength=0;
+//static uint32_t OutputLength=0;
 osSemaphoreId osVidSemph;
+static uint32_t JPEG_OUT_Read_BufferIndex = 0;
+static uint32_t JPEG_OUT_Write_BufferIndex = 0;
+
+
+#define JPEG_BUFFER_EMPTY (0)
+#define JPEG_BUFFER_FULL  (1)
+
+#define NB_OUTPUT_DATA_BUFFERS      (2)
+#define NB_INPUT_DATA_BUFFERS       (2)
+typedef struct
+{
+  uint8_t State;  
+  uint8_t *DataBuffer;
+  uint32_t DataLength;
+}JPEG_Data_BufferTypeDef;
+JPEG_Data_BufferTypeDef Jpeg_OUT_BufferTab[NB_INPUT_DATA_BUFFERS] =
+{
+  {JPEG_BUFFER_EMPTY , (uint8_t *)MCU_Data_OutBuffer, 0 },
+  {JPEG_BUFFER_EMPTY , (uint8_t *)&MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4], 0}
+};
+
 /* Private function prototypes -----------------------------------------------*/
 static void OutputThread(void const *argument);
 extern void LCD_LL_DrawBitmap16bpp(int LayerIndex, int x, int y, U16 const * p, int xSize, int ySize, int BytesPerLine);
@@ -238,23 +260,42 @@ static void OutputThread(void const *argument)
       switch(event.value.v)
       {
 		  case DECODE_CONVERT_OUTPUT_BUFF:
-			MCU_BlockIndex += pConvert_Function( (uint8_t *)MCU_Data_OutBuffer, (uint8_t *)0xC0000000, MCU_BlockIndex, OutputLength, &ConvertedDataCount);
+			MCU_BlockIndex += pConvert_Function( (uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Read_BufferIndex].DataBuffer, (uint8_t *)0xC0000000, MCU_BlockIndex, \
+					Jpeg_OUT_BufferTab[JPEG_OUT_Read_BufferIndex].DataLength, &ConvertedDataCount);
+			Jpeg_OUT_BufferTab[JPEG_OUT_Read_BufferIndex].State = JPEG_BUFFER_EMPTY;
+			JPEG_OUT_Read_BufferIndex = (JPEG_OUT_Read_BufferIndex+1) % NB_INPUT_DATA_BUFFERS;
+        
 
 			if((MCU_BlockIndex == MCU_TotalNb) && (MCU_TotalNb != 0))
 			{
-				LCD_LL_DrawBitmap16bpp(0, (800 - JPEG_Handle.Conf.ImageWidth)/2, (480 - JPEG_Handle.Conf.ImageHeight)/2 \
-						, (uint16_t *)0xC0000000, JPEG_Handle.Conf.ImageWidth, JPEG_Handle.Conf.ImageHeight, JPEG_Handle.Conf.ImageWidth * 2);
+			  LCD_LL_DrawBitmap16bpp(0, (800 - JPEG_Handle.Conf.ImageWidth)/2, (480 - JPEG_Handle.Conf.ImageHeight)/2 \
+				  , (uint16_t *)0xC0000000, JPEG_Handle.Conf.ImageWidth, JPEG_Handle.Conf.ImageHeight, JPEG_Handle.Conf.ImageWidth * 2);
 			}
-			else
-			{
-			  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_OUTPUT);
-			}
+
 			break;
+		  case JPEG_DATA_OUTPUT_FULL:
+			  MCU_BlockIndex += pConvert_Function( (uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Read_BufferIndex].DataBuffer, (uint8_t *)0xC0000000, MCU_BlockIndex,\
+					  Jpeg_OUT_BufferTab[JPEG_OUT_Read_BufferIndex].DataLength, &ConvertedDataCount);
+			  Jpeg_OUT_BufferTab[JPEG_OUT_Read_BufferIndex].State = JPEG_BUFFER_EMPTY;
+			  JPEG_OUT_Read_BufferIndex = (JPEG_OUT_Read_BufferIndex+1) % NB_INPUT_DATA_BUFFERS;
+
+
+			  if((MCU_BlockIndex == MCU_TotalNb) && (MCU_TotalNb != 0))
+			  {
+					LCD_LL_DrawBitmap16bpp(0, (800 - JPEG_Handle.Conf.ImageWidth)/2, (480 - JPEG_Handle.Conf.ImageHeight)/2 \
+					, (uint16_t *)0xC0000000, JPEG_Handle.Conf.ImageWidth, JPEG_Handle.Conf.ImageHeight, JPEG_Handle.Conf.ImageWidth * 2);
+			  }
+			  else
+			  {
+				  HAL_JPEG_ConfigOutputBuffer(&JPEG_Handle, (uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataBuffer, CHUNK_SIZE_OUT);
+				  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_OUTPUT);
+			  }
+			  break;
 		  case JPEG_DATA_INPUT:
 			  length = Get_data();
 			  HAL_JPEG_ConfigInputBuffer(&JPEG_Handle, FrameBuffer, length);
 			  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_INPUT);
-
+		  break;
       }
     } 
   }
@@ -271,7 +312,9 @@ U32 HW_JPEG_Draw (const void * pFileData, U32 DataSize, U32 x0, U32 y0)
 {  
   MCU_BlockIndex = 0;
   MCU_TotalNb = 0;
-  HAL_JPEG_Decode_DMA(&JPEG_Handle , (uint8_t *)pFileData ,DataSize ,(uint8_t *)MCU_Data_OutBuffer ,CHUNK_SIZE_OUT);
+  JPEG_OUT_Read_BufferIndex = 0;
+  JPEG_OUT_Write_BufferIndex = 0;
+  HAL_JPEG_Decode_DMA(&JPEG_Handle , (uint8_t *)pFileData ,DataSize ,(uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataBuffer ,CHUNK_SIZE_OUT);
   if(osSemaphoreWait(osVidSemph , 1000) == osErrorOS)
   {
     return 1;
@@ -288,10 +331,23 @@ U32 HW_JPEG_Draw (const void * pFileData, U32 DataSize, U32 x0, U32 y0)
   */
 void HAL_JPEG_DataReadyCallback (JPEG_HandleTypeDef *hjpeg, uint8_t *pDataOut, uint32_t OutDataLength)
 {
-  HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);
-  HAL_JPEG_ConfigOutputBuffer(hjpeg, (uint8_t *)MCU_Data_OutBuffer, CHUNK_SIZE_OUT); 
-  OutputLength = OutDataLength;
-  osMessagePut ( OutputEvent, DECODE_CONVERT_OUTPUT_BUFF, 0);
+  //HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);
+  //Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataBuffer;
+
+  Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].State = JPEG_BUFFER_FULL;
+  Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataLength = OutDataLength;
+
+  JPEG_OUT_Write_BufferIndex = (JPEG_OUT_Write_BufferIndex + 1) % NB_INPUT_DATA_BUFFERS;
+  if (Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].State == JPEG_BUFFER_FULL)
+  {
+	  HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);
+	  osMessagePut ( OutputEvent, JPEG_DATA_OUTPUT_FULL, 0);
+  }
+  else
+  {
+	  HAL_JPEG_ConfigOutputBuffer(hjpeg, (uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataBuffer, CHUNK_SIZE_OUT);
+	  osMessagePut ( OutputEvent, DECODE_CONVERT_OUTPUT_BUFF, 0);
+  }
 }
 
 /**
