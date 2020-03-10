@@ -46,10 +46,12 @@
 /* Define to prevent recursive inclusion -------------------------------------*/
 #ifndef __JPEG_DECODE_HW_H
 #define __JPEG_DECODE_HW_H
-
+#ifdef __cplusplus
+ extern "C" {
+#endif
 /* Includes ------------------------------------------------------------------*/
 #include "GUI.h"
-#include "audio_if.h"
+//#include "audio_if.h"
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/
 #define CHUNK_SIZE_OUT ((uint32_t)(768 * 10))
@@ -63,12 +65,14 @@ U32           HW_JPEG_Draw (const void * pFileData, U32 DataSize, U32 x0, U32 y0
 void          HW_JPEG_DeInit(void);
 
 
-U32           AUDIO_Init(U8 volume, U32 frequency);
-U32           AUDIO_Play(U8 *pData, U16 Size);
-U32           AUDIO_Stop   (void);
-U32           AUDIO_DeInit (void);
-U32           AUDIO_Notify(uint8_t msg);
-
+//U32           AUDIO_Init(U8 volume, U32 frequency);
+//U32           AUDIO_Play(U8 *pData, U16 Size);
+//U32           AUDIO_Stop   (void);
+//U32           AUDIO_DeInit (void);
+//U32           AUDIO_Notify(uint8_t msg);
+#ifdef __cplusplus
+ }
+#endif
 #endif /* __JPEG_DECODE_HW_H */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

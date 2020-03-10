@@ -60,6 +60,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
 #define DECODE_CONVERT_OUTPUT_BUFF    0x11
+#define JPEG_DATA_INPUT				  0x20
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 JPEG_YCbCrToRGB_Convert_Function pConvert_Function;
@@ -75,12 +76,13 @@ uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4] __attribute__((at(0x2000A000)));
 #elif defined ( __GNUC__ ) /* GNU Compiler */
 uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4] __attribute__((section(".MCU_Data_section")));
 #endif
-
+extern uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
 extern GUI_AVI_HANDLE havi;
 static uint32_t MCU_BlockIndex = 0;
 osThreadId hOutputThread;
 static osMessageQId OutputEvent = 0;
 uint32_t MCU_TotalNb = 0, IsFirstTime = 0;
+static uint32_t OutputLength=0;
 osSemaphoreId osVidSemph;
 /* Private function prototypes -----------------------------------------------*/
 static void OutputThread(void const *argument);
@@ -226,7 +228,7 @@ static void OutputThread(void const *argument)
 {
   uint32_t ConvertedDataCount;
   osEvent event;
-  
+  volatile unsigned int length;
   for(;;)
   {
     event = osMessageGet(OutputEvent, osWaitForever );
@@ -235,18 +237,24 @@ static void OutputThread(void const *argument)
     {
       switch(event.value.v)
       {
-      case DECODE_CONVERT_OUTPUT_BUFF:
-        MCU_BlockIndex += pConvert_Function( (uint8_t *)MCU_Data_OutBuffer, (uint8_t *)0xC0000000, MCU_BlockIndex, CHUNK_SIZE_OUT, &ConvertedDataCount);    
-        
-        if((MCU_BlockIndex == MCU_TotalNb) && (MCU_TotalNb != 0))
-        {
-            LCD_LL_DrawBitmap16bpp(0, 0, 0, (uint16_t *)0xC0000000, 800, 480, 1600);
-        }
-        else
-        {
-          HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_OUTPUT); 
-        }
-        break;        
+		  case DECODE_CONVERT_OUTPUT_BUFF:
+			MCU_BlockIndex += pConvert_Function( (uint8_t *)MCU_Data_OutBuffer, (uint8_t *)0xC0000000, MCU_BlockIndex, OutputLength, &ConvertedDataCount);
+
+			if((MCU_BlockIndex == MCU_TotalNb) && (MCU_TotalNb != 0))
+			{
+				LCD_LL_DrawBitmap16bpp(0, (800 - JPEG_Handle.Conf.ImageWidth)/2, (480 - JPEG_Handle.Conf.ImageHeight)/2 \
+						, (uint16_t *)0xC0000000, JPEG_Handle.Conf.ImageWidth, JPEG_Handle.Conf.ImageHeight, JPEG_Handle.Conf.ImageWidth * 2);
+			}
+			else
+			{
+			  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_OUTPUT);
+			}
+			break;
+		  case JPEG_DATA_INPUT:
+			  length = Get_data();
+			  HAL_JPEG_ConfigInputBuffer(&JPEG_Handle, FrameBuffer, length);
+			  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_INPUT);
+
       }
     } 
   }
@@ -282,6 +290,7 @@ void HAL_JPEG_DataReadyCallback (JPEG_HandleTypeDef *hjpeg, uint8_t *pDataOut, u
 {
   HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);
   HAL_JPEG_ConfigOutputBuffer(hjpeg, (uint8_t *)MCU_Data_OutBuffer, CHUNK_SIZE_OUT); 
+  OutputLength = OutDataLength;
   osMessagePut ( OutputEvent, DECODE_CONVERT_OUTPUT_BUFF, 0);
 }
 
@@ -296,6 +305,24 @@ void HAL_JPEG_DecodeCpltCallback(JPEG_HandleTypeDef *hjpeg)
 }
 
 /**
+  * @brief  JPEG Get Data callback
+  * @param hjpeg: JPEG handle pointer
+  * @param NbDecodedData: Number of decoded (consummed) bytes from input buffer
+  * @retval None
+  */
+void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hjpeg, uint32_t NbDecodedData)
+{
+	if (NbDecodedData == AVI_VIDEO_BUF_SIZE)
+	{
+		HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_INPUT);
+		osMessagePut ( OutputEvent, JPEG_DATA_INPUT, 0);
+	}
+	else
+	{
+		HAL_JPEG_ConfigInputBuffer(hjpeg, FrameBuffer+NbDecodedData, AVI_VIDEO_BUF_SIZE-NbDecodedData);
+	}
+}
+/**
   * @brief  JPEG Info ready callback
   * @param hjpeg: JPEG handle pointer
   * @param pInfo: JPEG Info Struct pointer
@@ -303,6 +330,32 @@ void HAL_JPEG_DecodeCpltCallback(JPEG_HandleTypeDef *hjpeg)
   */
 void HAL_JPEG_InfoReadyCallback(JPEG_HandleTypeDef *hjpeg, JPEG_ConfTypeDef *pInfo)
 {
+	if(pInfo->ChromaSubsampling == JPEG_420_SUBSAMPLING)
+	  {
+	    if((pInfo->ImageWidth % 16) != 0)
+	    pInfo->ImageWidth += (16 - (pInfo->ImageWidth % 16));
+
+	    if((pInfo->ImageHeight % 16) != 0)
+	    pInfo->ImageHeight += (16 - (pInfo->ImageHeight % 16));
+	  }
+
+	  if(pInfo->ChromaSubsampling == JPEG_422_SUBSAMPLING)
+	  {
+	    if((pInfo->ImageWidth % 16) != 0)
+	    pInfo->ImageWidth += (16 - (pInfo->ImageWidth % 16));
+
+	    if((pInfo->ImageHeight % 8) != 0)
+	    pInfo->ImageHeight += (8 - (pInfo->ImageHeight % 8));
+	  }
+
+	  if(pInfo->ChromaSubsampling == JPEG_444_SUBSAMPLING)
+	  {
+	    if((pInfo->ImageWidth % 8) != 0)
+	    pInfo->ImageWidth += (8 - (pInfo->ImageWidth % 8));
+
+	    if((pInfo->ImageHeight % 8) != 0)
+	    pInfo->ImageHeight += (8 - (pInfo->ImageHeight % 8));
+	  }
   if(JPEG_GetDecodeColorConvertFunc(pInfo, &pConvert_Function, &MCU_TotalNb) == HAL_OK)
   {
   }   

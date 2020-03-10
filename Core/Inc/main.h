@@ -61,6 +61,7 @@ extern "C" {
 #include "queue.h"
 #include "croutine.h"
 #include "timers.h"
+#include "cmsis_os.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* SAI peripheral configuration defines */
@@ -137,6 +138,7 @@ void Error_Handler(void);
 /* USER CODE END Private defines */
 uint16_t GBK2UTF16(const char * str);
 void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName );
+int Get_data(void);
 #ifdef __cplusplus
 }
 #endif

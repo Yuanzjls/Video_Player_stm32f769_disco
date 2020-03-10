@@ -14,8 +14,8 @@
 #include <WM.h>
 #include <stm32f769i_discovery_ts.h>
 #include <MainTask.h>
+#include "video_player_app.h"
 
-//#include "MainTask.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -52,9 +52,7 @@ DMA_HandleTypeDef            hSaiDma;
 #define JPEG_SOI_MARKER_BYTE1 ((JPEG_SOI_MARKER >> 8) & 0xFF)
 /*JPEG Related variable
  */
-static JPEG_HandleTypeDef     JPEG_Handle;
-static JPEG_ConfTypeDef       JPEG_Info;
-extern __IO uint32_t Previous_FrameSize;
+
 
 
 #define MP3_HEADER_SIZE_POSITION  0x06
@@ -424,7 +422,7 @@ static void vTaskMusic(void *pvParameters)
 	  }
   }
 }
-#define AVI_VIDEO_BUF_SIZE    (60 * 1024)
+
 uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
 static int _GetData(void * p, const U8 ** ppData, unsigned NumBytesReq, U32 Off)
 {
@@ -449,19 +447,34 @@ static int _GetData(void * p, const U8 ** ppData, unsigned NumBytesReq, U32 Off)
   return NumBytesRead;
 }
 
+int Get_data(void)
+{
+	unsigned int length = 0;
+
+	f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+	return length;
+}
+
 void  vTaskGUI(void *pvParameters)
 {
+	unsigned int length = 0;
+
+	HW_JPEG_Init();
+
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
 		if (f_open(&fi, "/Jpeg/image.jpg", FA_READ) == FR_OK)
 		{
-			GUI_JPEG_DrawEx(_GetData, &fi, 0, 0);
+			//GUI_JPEG_DrawEx(_GetData, &fi, 0, 0);
+			f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+			HW_JPEG_Draw(FrameBuffer, AVI_VIDEO_BUF_SIZE, 0, 0);
+
 		}
 	}
 	while(1)
 	{
 		BSP_LED_Toggle(LED_RED);
-		vTaskDelay(2000);
+		vTaskDelay(500);
 	}
 
 }

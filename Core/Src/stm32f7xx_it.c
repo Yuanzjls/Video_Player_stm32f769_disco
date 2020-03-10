@@ -78,6 +78,7 @@ extern LTDC_HandleTypeDef hltdc;
 extern DSI_HandleTypeDef hdsi;
 extern UART_HandleTypeDef UartHandle;
 extern SD_HandleTypeDef uSdHandle;
+extern JPEG_HandleTypeDef    JPEG_Handle;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -303,7 +304,19 @@ void DMA2_Stream5_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(uSdHandle.hdmatx);
 }
+void JPEG_IRQHandler(void)
+{
+  HAL_JPEG_IRQHandler(&JPEG_Handle);
+}
+void DMA2_Stream3_IRQHandler(void) /* AUDIO_DFSDM_DMAx_LEFT_IRQHandler */
+{
+    HAL_DMA_IRQHandler(JPEG_Handle.hdmain);
+}
 
+void DMA2_Stream4_IRQHandler(void)
+{
+	HAL_DMA_IRQHandler(JPEG_Handle.hdmaout);
+}
 /**
   * @brief  This function handles SDIO interrupt request.
   * @param  None
