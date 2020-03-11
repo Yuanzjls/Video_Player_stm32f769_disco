@@ -138,7 +138,7 @@ void Error_Handler(void);
 /* USER CODE END Private defines */
 uint16_t GBK2UTF16(const char * str);
 void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName );
-int Get_data(void);
+int Get_data(uint8_t* buff, uint32_t Datalength);
 #ifdef __cplusplus
 }
 #endif

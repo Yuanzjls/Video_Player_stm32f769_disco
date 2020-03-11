@@ -447,29 +447,55 @@ static int _GetData(void * p, const U8 ** ppData, unsigned NumBytesReq, U32 Off)
   return NumBytesRead;
 }
 
-int Get_data(void)
+int Get_data(uint8_t *buff, uint32_t Datalength)
 {
 	unsigned int length = 0;
 
-	f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+	f_read(&fi, buff, Datalength, &length);
 	return length;
 }
 
 void  vTaskGUI(void *pvParameters)
 {
-	unsigned int length = 0;
+	unsigned int length;
+	FRESULT res;
+	FILINFO fno;
+	DIR dj;
 
 	HW_JPEG_Init();
 
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
-		if (f_open(&fi, "/Jpeg/image.jpg", FA_READ) == FR_OK)
+		strcpy(filename, "/Jpeg/");
+		while(1)
 		{
-			//GUI_JPEG_DrawEx(_GetData, &fi, 0, 0);
-			f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
-			HW_JPEG_Draw(FrameBuffer, AVI_VIDEO_BUF_SIZE, 0, 0);
+			res = f_findfirst(&dj, &fno, "/Jpeg", "*.jpg");
+			strcpy(&filename[6], fno.fname);
+			if (res == FR_OK && fno.fname[0])
+			{
+				f_open(&fi, filename, FA_READ);
+				f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+				HW_JPEG_Draw( length);
+				BSP_LED_Toggle(LED_RED);
+				vTaskDelay(500);
 
+			}
+			res = f_findnext(&dj, &fno);
+			while (res == FR_OK && fno.fname[0])
+			{
+				f_close(&fi);
+				strcpy(&filename[6], fno.fname);
+				f_open(&fi, filename, FA_READ);
+				f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+				HW_JPEG_Draw( length);
+				res = f_findnext(&dj, &fno);
+				BSP_LED_Toggle(LED_RED);
+				vTaskDelay(500);
+
+			}
+			f_close(&fi);
 		}
+
 	}
 	while(1)
 	{

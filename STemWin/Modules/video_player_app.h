@@ -61,7 +61,7 @@
 /* Exported macro ------------------------------------------------------------*/
 /* Exported functions ------------------------------------------------------- */
 void          HW_JPEG_Init(void);
-U32           HW_JPEG_Draw (const void * pFileData, U32 DataSize, U32 x0, U32 y0);
+U32           HW_JPEG_Draw (U32 DataSize);
 void          HW_JPEG_DeInit(void);
 
 
