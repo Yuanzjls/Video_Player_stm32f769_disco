@@ -10,7 +10,7 @@
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
 #include "stm32f769i_discovery_sd.h"
-#include "semphr.h"
+#include "cmsis_os.h"
 /* Definitions of physical drive number for each drive */
 #define DEV_RAM		1	/* Example: Map Ramdisk to physical drive 0 */
 #define DEV_MMC		0	/* Example: Map MMC/SD card to physical drive 1 */
@@ -18,6 +18,11 @@
 
 #define SD_TIMEOUT 1000
 #define SD_DEFAULT_BLOCK_SIZE 512
+
+#define QUEUE_SIZE         (uint32_t) 10
+#define READ_CPLT_MSG      (uint32_t) 1
+#define WRITE_CPLT_MSG     (uint32_t) 2
+static osMessageQId SDQueueID;
 /*-----------------------------------------------------------------------*/
 /* Get Drive Status                                                      */
 /*-----------------------------------------------------------------------*/
@@ -60,7 +65,6 @@ DSTATUS disk_status (
 }
 
 
-static SemaphoreHandle_t xSemaphore;
 /*-----------------------------------------------------------------------*/
 /* Inidialize a Drive                                                    */
 /*-----------------------------------------------------------------------*/
@@ -82,7 +86,9 @@ DSTATUS disk_initialize (
 
 	case DEV_MMC :
 		stat = BSP_SD_Init();
-		xSemaphore = xSemaphoreCreateBinary();
+
+		osMessageQDef(SD_Queue, QUEUE_SIZE, uint16_t);
+		SDQueueID = osMessageCreate (osMessageQ(SD_Queue), NULL);
 		// translate the reslut code here
 
 		return stat;
@@ -113,9 +119,9 @@ DRESULT disk_read (
 )
 {
 	DRESULT res;
-	int result;
+	osEvent event;
 	uint32_t timer;
-
+	uint32_t alignedAddr;
 	switch (pdrv) {
 	case DEV_RAM :
 		// translate the arguments here
@@ -131,26 +137,36 @@ DRESULT disk_read (
 
 		res = RES_ERROR;
 
+		  /*
+		    the SCB_CleanDCache_by_Addr() requires a 32-Byte aligned address
+		    adjust the address and the D-Cache size to clean accordingly.
+		  */
 		if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
-		(uint32_t) (sector),
-		count) == MSD_OK)
-		{
-			if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
-			{
-				/* We were able to obtain the semaphore and can now access the
-				shared resource. */
-				timer = xTaskGetTickCount() + SD_TIMEOUT;
-				while(timer > xTaskGetTickCount())
-				{
-					if (BSP_SD_GetCardState()== MSD_OK)
-					{
-						res = RES_OK;
-						break;
-					}
-				}
-			}
+		                           (uint32_t) (sector),
+		                           count) == MSD_OK)
+		  {
+		    /* wait for a message from the queue or a timeout */
+		    event = osMessageGet(SDQueueID, SD_TIMEOUT);
 
-		}
+		    if (event.status == osEventMessage)
+		    {
+		      if (event.value.v == READ_CPLT_MSG)
+		      {
+		        timer = osKernelSysTick() + SD_TIMEOUT;
+		        /* block until SDIO IP is ready or a timeout occur */
+		        while(timer > osKernelSysTick())
+		        {
+		          if (BSP_SD_GetCardState() == SD_TRANSFER_OK)
+		          {
+		            res = RES_OK;
+//		            alignedAddr = (uint32_t)buff & ~0x1F;
+//		            SCB_InvalidateDCache_by_Addr((uint32_t*)alignedAddr, count*BLOCKSIZE + ((uint32_t)buff - alignedAddr));
+		            break;
+				  }
+			    }
+			  }
+		    }
+		  }
 
 
 		  return res;
@@ -188,7 +204,7 @@ DRESULT disk_write (
 )
 {
 	DRESULT res;
-	int result;
+	osEvent event;
 
 
 	switch (pdrv) {
@@ -207,21 +223,29 @@ DRESULT disk_write (
 		res = RES_ERROR;
 
 		if(BSP_SD_WriteBlocks_DMA((uint32_t*)buff,
-		(uint32_t)(sector),
-		count) == MSD_OK)
-		{
-			if( xSemaphoreTake( xSemaphore, ( TickType_t ) SD_TIMEOUT ) == pdTRUE )
-			{
-				/* We were able to obtain the semaphore and can now access the
-				shared resource. */
+		                           (uint32_t) (sector),
+		                           count) == MSD_OK)
+		  {
+		    /* Get the message from the queue */
+		    event = osMessageGet(SDQueueID, SD_TIMEOUT);
 
-				while(BSP_SD_GetCardState()!= MSD_OK)
-				{
-					;
-				}
-				res = RES_OK;
-			}
-		}
+		    if (event.status == osEventMessage)
+		    {
+		      if (event.value.v == WRITE_CPLT_MSG)
+		      {
+		        timer = osKernelSysTick() + SD_TIMEOUT;
+		        /* block until SDIO IP is ready or a timeout occur */
+		        while(timer > osKernelSysTick())
+		        {
+		          if (BSP_SD_GetCardState() == SD_TRANSFER_OK)
+		          {
+		            res = RES_OK;
+		            break;
+		          }
+		        }
+		      }
+		    }
+		  }
 
 		  return res;
 
@@ -325,51 +349,30 @@ return 0;
 
 }
 /**
-  * @brief BSP Tx Transfer completed callbacks
+  * @brief Tx Transfer completed callbacks
+  * @param SdCard: SD_CARD1 or SD_CARD2
   * @retval None
   */
-void BSP_SD_WriteCpltCallback(void)
+void BSP_SD_WriteCpltCallback()
 {
-	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-	/* At this point xTaskToNotify should not be NULL as a transmission was
-	in progress. */
-	//configASSERT( xTaskToNotify != NULL );
-
-	/* Notify the task that the transmission is complete. */
-	xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
-
-	/* There are no transmissions in progress, so no tasks to notify. */
-	//xTaskToNotify = NULL;
-
-	/* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
-	should be performed to ensure the interrupt returns directly to the highest
-	priority task.  The macro used for this purpose is dependent on the port in
-	use and may be called portEND_SWITCHING_ISR(). */
-	portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+  /*
+   * No need to add an "osKernelRunning()" check here, as the SD_initialize()
+   * is always called before any SD_Read()/SD_Write() call
+   */
+   osMessagePut(SDQueueID, WRITE_CPLT_MSG, osWaitForever);
 }
 
 /**
-  * @brief BSP Rx Transfer completed callbacks
+  * @brief Rx Transfer completed callbacks
+  * @param SdCard: SD_CARD1 or SD_CARD2
   * @retval None
   */
-void BSP_SD_ReadCpltCallback(void)
+void BSP_SD_ReadCpltCallback()
 {
-	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-	/* At this point xTaskToNotify should not be NULL as a transmission was
-	in progress. */
-	//configASSERT( xTaskToNotify != NULL );
-
-	/* Notify the task that the transmission is complete. */
-	//vTaskNotifyGiveFromISR( xTaskToNotify, &xHigherPriorityTaskWoken );
-	xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
-	/* There are no transmissions in progress, so no tasks to notify. */
-	//xTaskToNotify = NULL;
-
-	/* If xHigherPriorityTaskWoken is now set to pdTRUE then a context switch
-	should be performed to ensure the interrupt returns directly to the highest
-	priority task.  The macro used for this purpose is dependent on the port in
-	use and may be called portEND_SWITCHING_ISR(). */
-	portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+  /*
+   * No need to add an "osKernelRunning()" check here, as the SD_initialize()
+   * is always called before any SD_Read()/SD_Write() call
+   */
+   osMessagePut(SDQueueID, READ_CPLT_MSG, osWaitForever);
 }
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

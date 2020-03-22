@@ -15,7 +15,7 @@
 #include <stm32f769i_discovery_ts.h>
 #include <MainTask.h>
 #include "video_player_app.h"
-
+#include "GUI_AVI.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -36,26 +36,16 @@
 
 /* Private variables ---------------------------------------------------------*/
 
-extern LTDC_HandleTypeDef hltdc_discovery;
-static DMA2D_HandleTypeDef   hdma2d;
-extern DSI_HandleTypeDef hdsi_discovery;
-DMA2D_HandleTypeDef Dma2dHandle;
-DSI_VidCfgTypeDef hdsivideo_handle;
-DSI_CmdCfgTypeDef CmdCfg;
-DSI_LPCmdTypeDef LPCmd;
-DSI_PLLInitTypeDef dsiPllInit;
+
 SAI_HandleTypeDef SaiHandle;
 DMA_HandleTypeDef            hSaiDma;
 
-#define JPEG_SOI_MARKER (0xFFD8) /* JPEG Start Of Image marker*/
-#define JPEG_SOI_MARKER_BYTE0 (JPEG_SOI_MARKER & 0xFF)
-#define JPEG_SOI_MARKER_BYTE1 ((JPEG_SOI_MARKER >> 8) & 0xFF)
 /*JPEG Related variable
  */
 
 
 
-#define MP3_HEADER_SIZE_POSITION  0x06
+
 
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -88,12 +78,7 @@ const uint16_t kMatrixHeight = 480;       // known working: 16, 32, 48, 64
 /* Private function prototypes -----------------------------------------------*/
  void SystemClock_Config(void);
 static void MX_RTC_Init(void);
-static void CopyPicture(uint32_t *pSrc,
-                           uint32_t *pDst,
-                           uint16_t x,
-                           uint16_t y,
-                           uint16_t xsize,
-                           uint16_t ysize);
+
 
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
@@ -214,7 +199,7 @@ void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t
   */
 uint32_t FrameOffset=0;
 const uint16_t block_size = 36864;
-uint16_t buff[block_size];
+uint16_t buff[block_size+4];
 #define PLAY_HEADER          0x2C
 bool flag = 0;
 uint8_t temp_data[100];
@@ -424,77 +409,86 @@ static void vTaskMusic(void *pvParameters)
 }
 
 uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
-static int _GetData(void * p, const U8 ** ppData, unsigned NumBytesReq, U32 Off)
-{
-  unsigned int NumBytesRead;
-  FRESULT res;
 
-  if(Off != 0xFFFFFFFF)
-  {
-    /* Set file pointer to the required position */
-    f_lseek((FIL *)p, Off);
-  }
-
-  /* Read data into buffer */
-  res = f_read((FIL *)p, (U8 *)FrameBuffer, NumBytesReq, &NumBytesRead);
-
-  if((res != FR_OK) ||( NumBytesRead == 0))
-  {
-    NumBytesRead = 0;
-  }
-  *ppData = FrameBuffer;
-  /* Return number of available bytes */
-  return NumBytesRead;
-}
 
 int Get_data(uint8_t *buff, uint32_t Datalength)
 {
-	unsigned int length = 0;
+	unsigned int length;
 
 	f_read(&fi, buff, Datalength, &length);
 	return length;
 }
-
+extern AVI_INFO Avix;
 void  vTaskGUI(void *pvParameters)
 {
 	unsigned int length;
 	FRESULT res;
 	FILINFO fno;
 	DIR dj;
-
+	volatile AVISTATUS avi_res;
 	HW_JPEG_Init();
+	uint32_t offset, last_time, current_frame, next_frame_time, frame_per_ms, audio_pr;
+	uint8_t *buf_pr = (uint8_t*)buff;
 
+
+	BSP_SD_Init();
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
-		strcpy(filename, "/Jpeg/");
-		while(1)
+
+		f_open(&fi, "/Avi/mv1.avi", FA_READ);
+		f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+		avi_res = _AVI_Init(FrameBuffer, AVI_VIDEO_BUF_SIZE);
+		offset = _AVI_SearchID(FrameBuffer, AVI_VIDEO_BUF_SIZE, (U8*)"movi");
+		_Avi_Get_Streaminfo(FrameBuffer + offset + 4);
+		f_lseek(&fi, offset+12);
+		Playback_Init(Avix.SampleRate);
+		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
+		current_frame=0;
+		frame_per_ms = Avix.SecPerFrame/1000;
+		next_frame_time = 0;
+		audio_pr = 0;
+		last_time = osKernelSysTick();
+		while(f_size(&fi)!=f_tell(&fi) && Avix.StreamSize<=AVI_VIDEO_BUF_SIZE)
 		{
-			res = f_findfirst(&dj, &fno, "/Jpeg", "*.jpg");
-			strcpy(&filename[6], fno.fname);
-			if (res == FR_OK && fno.fname[0])
-			{
-				f_open(&fi, filename, FA_READ);
-				f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
-				HW_JPEG_Draw( length);
-				BSP_LED_Toggle(LED_RED);
-				vTaskDelay(500);
 
-			}
-			res = f_findnext(&dj, &fno);
-			while (res == FR_OK && fno.fname[0])
+			if (AVI_AUDS_FLAG==Avix.StreamID)
 			{
-				f_close(&fi);
-				strcpy(&filename[6], fno.fname);
-				f_open(&fi, filename, FA_READ);
-				f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
-				HW_JPEG_Draw( length);
-				res = f_findnext(&dj, &fno);
-				BSP_LED_Toggle(LED_RED);
-				vTaskDelay(500);
-
+				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
+				if (audio_pr+Avix.StreamSize>(block_size<<1))
+				{
+					audio_pr = 0;
+				}
+				memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, Avix.StreamSize);
+				audio_pr+=Avix.StreamSize;
+				_Avi_Get_Streaminfo(FrameBuffer + Avix.StreamSize);
+				//vTaskDelay(20);
 			}
-			f_close(&fi);
+			else if (Avix.StreamID == AVI_VIDS_FLAG)
+			{
+				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
+				if (Avix.StreamSize >0)
+				{
+					if ((osKernelSysTick()-last_time) <= (next_frame_time-5))
+					{
+						if (HW_JPEG_Draw_timeout(Avix.StreamSize, next_frame_time-(osKernelSysTick()-last_time)))
+						{
+//							HW_JPEG_DeInit();
+//							HW_JPEG_Init();
+						}
+						else
+						{
+							current_frame++;
+						}
+						BSP_LED_Toggle(LED_RED);
+					}
+					next_frame_time += frame_per_ms;
+				}
+
+				_Avi_Get_Streaminfo(FrameBuffer + Avix.StreamSize);
+			}
+
 		}
+		f_close(&fi);
 
 	}
 	while(1)
@@ -516,88 +510,88 @@ static void AppTaskCreate(void)
 }
 static void MPU_Config(void)
 {
-  MPU_Region_InitTypeDef MPU_InitStruct;
+	MPU_Region_InitTypeDef MPU_InitStruct;
 
-  /* Disable the MPU */
-  HAL_MPU_Disable();
+	  /* Disable the MPU */
+	  HAL_MPU_Disable();
 
-  /* Configure the MPU as Normal Non Cacheable for the SRAM1 and SRAM2 */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.BaseAddress = 0x20020000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
-  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
-  MPU_InitStruct.SubRegionDisable = 0x00;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+	  /* Configure the MPU as Normal Non Cacheable for the SRAM1 and SRAM2 */
+	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+	  MPU_InitStruct.BaseAddress = 0x20020000;
+	  MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
+	  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+	  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+	  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+	  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+	  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+	  MPU_InitStruct.SubRegionDisable = 0x00;
+	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /* Configure the MPU attributes as Non Cacheable and Non Bufferable for SDRAM */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.BaseAddress = 0xC0000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_256MB;
-  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.SubRegionDisable = 0x00;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+	  /* Configure the MPU attributes as Non Cacheable and Non Bufferable for SDRAM */
+	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+	  MPU_InitStruct.BaseAddress = 0xC0000000;
+	  MPU_InitStruct.Size = MPU_REGION_SIZE_256MB;
+	  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+	  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+	  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+	  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+	  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
+	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+	  MPU_InitStruct.SubRegionDisable = 0x00;
+	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /* Configure the MPU attributes as WT for SDRAM */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.BaseAddress = 0xC0000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_8MB;
-  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER3;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.SubRegionDisable = 0x00;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+	  /* Configure the MPU attributes as WT for SDRAM */
+	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+	  MPU_InitStruct.BaseAddress = 0xC0000000;
+	  MPU_InitStruct.Size = MPU_REGION_SIZE_8MB;
+	  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+	  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+	  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+	  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+	  MPU_InitStruct.Number = MPU_REGION_NUMBER3;
+	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+	  MPU_InitStruct.SubRegionDisable = 0x00;
+	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /* Configure the MPU attributes as strongly ordred for QSPI (unused zone) */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.BaseAddress = 0x90000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_256MB;
-  MPU_InitStruct.AccessPermission = MPU_REGION_PRIV_RO;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER4;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.SubRegionDisable = 0x00;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+	  /* Configure the MPU attributes as strongly ordred for QSPI (unused zone) */
+	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+	  MPU_InitStruct.BaseAddress = 0x90000000;
+	  MPU_InitStruct.Size = MPU_REGION_SIZE_256MB;
+	  MPU_InitStruct.AccessPermission = MPU_REGION_PRIV_RO;
+	  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+	  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+	  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+	  MPU_InitStruct.Number = MPU_REGION_NUMBER4;
+	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+	  MPU_InitStruct.SubRegionDisable = 0x00;
+	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /* Configure the MPU attributes as WT for QSPI (used 16Mbytes) */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.BaseAddress = 0x90000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_16MB;
-  MPU_InitStruct.AccessPermission = MPU_REGION_PRIV_RO;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER5;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.SubRegionDisable = 0x00;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+	  /* Configure the MPU attributes as WT for QSPI (used 16Mbytes) */
+	  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+	  MPU_InitStruct.BaseAddress = 0x90000000;
+	  MPU_InitStruct.Size = MPU_REGION_SIZE_16MB;
+	  MPU_InitStruct.AccessPermission = MPU_REGION_PRIV_RO;
+	  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+	  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+	  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+	  MPU_InitStruct.Number = MPU_REGION_NUMBER5;
+	  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+	  MPU_InitStruct.SubRegionDisable = 0x00;
+	  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
 
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+	  HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /* Enable the MPU */
-  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+	  /* Enable the MPU */
+	  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 }
 int main(void)
 {
@@ -608,7 +602,6 @@ int main(void)
 	uint8_t SD_state = MSD_OK, res;
 	
 
-	uint32_t AlphaInvertConfig;
 
 
 	MPU_Config();
@@ -693,7 +686,6 @@ int main(void)
 	// gif decode callback function set
 	/* Initializes the SDRAM device */
 	BSP_SDRAM_Init();
-	BSP_SD_Init();
 	BSP_LED_Init(LED1);
 	BSP_LED_Init(LED2);
 	BSP_LED_Init(LED3);
@@ -947,7 +939,7 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack()
 
 void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai)
 {
-	BSP_AUDIO_OUT_TransferComplete_CallBack();
+	//BSP_AUDIO_OUT_TransferComplete_CallBack();
 }
 /**
   * @brief Tx Transfer Half completed callbacks
@@ -975,7 +967,7 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack()
 }
 void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai)
 {
-	BSP_AUDIO_OUT_HalfTransfer_CallBack();
+	//BSP_AUDIO_OUT_HalfTransfer_CallBack();
 }
 #ifdef  USE_FULL_ASSERT
 /**

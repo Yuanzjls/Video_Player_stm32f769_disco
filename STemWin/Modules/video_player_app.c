@@ -78,10 +78,12 @@ uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4] __attribute__((at(0x2000A000)));
 uint32_t MCU_Data_OutBuffer[CHUNK_SIZE_OUT/4 * 2] __attribute__((section(".MCU_Data_section")));
 #endif
 extern uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
-extern GUI_AVI_HANDLE havi;
+
 static uint32_t MCU_BlockIndex = 0;
 osThreadId hOutputThread;
+osThreadId hInputThread;
 static osMessageQId OutputEvent = 0;
+static osMessageQId InputEvent = 0;
 uint32_t MCU_TotalNb = 0, IsFirstTime = 0;
 static uint8_t Output_Full;
 static uint8_t Input_Empty ;
@@ -90,7 +92,7 @@ static uint32_t JPEG_OUT_Read_BufferIndex;
 static uint32_t JPEG_OUT_Write_BufferIndex;
 static uint32_t JPEG_IN_Read_BufferIndex;
 static uint32_t JPEG_IN_Write_BufferIndex ;
-
+static uint32_t Remain_Data_Length;
 #define JPEG_BUFFER_EMPTY (0)
 #define JPEG_BUFFER_FULL  (1)
 
@@ -114,6 +116,7 @@ JPEG_Data_BufferTypeDef Jpeg_IN_BufferTab[NB_INPUT_DATA_BUFFERS] =
 };
 /* Private function prototypes -----------------------------------------------*/
 static void OutputThread(void const *argument);
+static void InputThread(void const *argument);
 extern void LCD_LL_DrawBitmap16bpp(int LayerIndex, int x, int y, U16 const * p, int xSize, int ySize, int BytesPerLine);
 void TransferComplete_CallBack(void);
 void HalfTransfer_CallBack(void);
@@ -197,6 +200,7 @@ void HW_JPEG_Init(void)
   HAL_NVIC_SetPriority(DMA2_Stream4_IRQn, 0x07, 0x0F);
   HAL_NVIC_EnableIRQ(DMA2_Stream4_IRQn);  
   
+  HAL_JPEG_DeInit(&JPEG_Handle);
    /* Init the HAL JPEG driver */
   JPEG_Handle.Instance = JPEG;
   HAL_JPEG_Init(&JPEG_Handle);
@@ -205,10 +209,16 @@ void HW_JPEG_Init(void)
   osMessageQDef(OUTPUT_Queue, 3, uint16_t);
   OutputEvent = osMessageCreate (osMessageQ(OUTPUT_Queue), NULL); 
   
+  osMessageQDef(INPUT_Queue, 3, uint16_t);
+  InputEvent = osMessageCreate (osMessageQ(INPUT_Queue), NULL);
+
   /* Output Thread  definition */
   osThreadDef(OUTPUT_THREAD, OutputThread, osPriorityRealtime, 0, configMINIMAL_STACK_SIZE);
   hOutputThread = osThreadCreate(osThread(OUTPUT_THREAD), NULL);
   
+	osThreadDef(INTPUT_THREAD, InputThread, osPriorityRealtime, 0, configMINIMAL_STACK_SIZE);
+	hInputThread = osThreadCreate(osThread(INTPUT_THREAD), NULL);
+
     /* Create the Semaphore used by the two threads */
     /* Create Semaphore lock */
   osSemaphoreDef(Semaphore);
@@ -233,17 +243,25 @@ void HW_JPEG_DeInit(void)
     osThreadTerminate(hOutputThread);
     hOutputThread = 0;
   }
-  
+  if (hInputThread)
+  {
+	  osThreadTerminate(hInputThread);
+	  hInputThread = 0;
+  }
   if(osVidSemph)
   {
     osSemaphoreDelete(osVidSemph);
     osVidSemph = 0;
   }
-  
   if(OutputEvent)
   {
     vQueueDelete(OutputEvent); 
     OutputEvent = 0;  
+  }
+  if (InputEvent)
+  {
+	  vQueueDelete(InputEvent);
+	  InputEvent = 0;
   }
 }
 
@@ -285,24 +303,50 @@ static void OutputThread(void const *argument)
 
 			}
 			break;
-		  case JPEG_DATA_INPUT:
-			  length = Get_data(Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].DataBuffer, AVI_VIDEO_BUF_SIZE/2);
-			  Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].State = JPEG_BUFFER_FULL;
-			  Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].DataLength = length;
-			  JPEG_IN_Write_BufferIndex = (JPEG_IN_Write_BufferIndex+1)%NB_INPUT_DATA_BUFFERS;
-			  if (Input_Empty == 1)
-			  {
-				  HAL_JPEG_ConfigInputBuffer(&JPEG_Handle, Jpeg_IN_BufferTab[JPEG_IN_Read_BufferIndex].DataBuffer,\
-				  					Jpeg_IN_BufferTab[JPEG_IN_Read_BufferIndex].DataLength);
-				  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_INPUT);
-				  Input_Empty = 0;
-			  }
-		  break;
       }
     } 
   }
 }
 
+static void InputThread(void const *argument)
+{
+	//uint32_t ConvertedDataCount;
+	osEvent event;
+	volatile unsigned int length;
+	for(;;)
+	{
+		event = osMessageGet(InputEvent, osWaitForever );
+		if( event.status == osEventMessage )
+		    {
+		      switch(event.value.v)
+		      {
+		      case JPEG_DATA_INPUT:
+		    	if (Remain_Data_Length >= AVI_VIDEO_BUF_SIZE/2)
+		    	{
+		    		length = Get_data(Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].DataBuffer, AVI_VIDEO_BUF_SIZE/2);
+		    	}
+		    	else
+		    	{
+		    		length = Get_data(Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].DataBuffer, Remain_Data_Length);
+		    	}
+		    	Remain_Data_Length = Remain_Data_Length - length;
+				Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].State = JPEG_BUFFER_FULL;
+				Jpeg_IN_BufferTab[JPEG_IN_Write_BufferIndex].DataLength = length;
+				JPEG_IN_Write_BufferIndex = (JPEG_IN_Write_BufferIndex+1)%NB_INPUT_DATA_BUFFERS;
+
+				if (Input_Empty == 1)
+				{
+				  HAL_JPEG_ConfigInputBuffer(&JPEG_Handle, Jpeg_IN_BufferTab[JPEG_IN_Read_BufferIndex].DataBuffer,\
+									Jpeg_IN_BufferTab[JPEG_IN_Read_BufferIndex].DataLength);
+				  HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_INPUT);
+				  Input_Empty = 0;
+				}
+				break;
+		      }
+		    }
+
+	}
+}
 /**
   * @brief  Decode_DMA
   * @param hjpeg: JPEG handle pointer
@@ -325,7 +369,21 @@ U32 HW_JPEG_Draw (U32 DataSize)
   Output_Full = 0;
   Input_Empty = 0;
 
-  if (DataSize>(AVI_VIDEO_BUF_SIZE/2))
+  if (DataSize<=AVI_VIDEO_BUF_SIZE)
+  {
+	  Remain_Data_Length = 0;
+  }
+  else
+  {
+	  Remain_Data_Length = DataSize - AVI_VIDEO_BUF_SIZE;
+  }
+
+  if (DataSize>=AVI_VIDEO_BUF_SIZE)
+  {
+	  Jpeg_IN_BufferTab[0].DataLength=AVI_VIDEO_BUF_SIZE/2;
+	  Jpeg_IN_BufferTab[1].DataLength=AVI_VIDEO_BUF_SIZE/2;
+  }
+  else if (DataSize>(AVI_VIDEO_BUF_SIZE/2))
   {
 	  Jpeg_IN_BufferTab[0].DataLength=AVI_VIDEO_BUF_SIZE/2;
 	  Jpeg_IN_BufferTab[1].DataLength=DataSize - AVI_VIDEO_BUF_SIZE/2;
@@ -340,11 +398,67 @@ U32 HW_JPEG_Draw (U32 DataSize)
 		  ,(uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataBuffer ,CHUNK_SIZE_OUT);
   if(osSemaphoreWait(osVidSemph , 1000) == osErrorOS)
   {
+	  HAL_JPEG_Abort(&JPEG_Handle);
     return 1;
   }
   return 0;
 }
+/**
+  * @brief  Decode_DMA
+  * @param hjpeg: JPEG handle pointer
+  * @param  FileName    : jpg file path for decode.
+  * @param  DestAddress : ARGB destination Frame Buffer Address.
+  * @retval None
+  */
+U32 HW_JPEG_Draw_timeout (U32 DataSize, U32 time_out)
+{
+  MCU_BlockIndex = 0;
+  MCU_TotalNb = 0;
+  JPEG_OUT_Read_BufferIndex = 0;
+  JPEG_OUT_Write_BufferIndex = 0;
+  JPEG_IN_Read_BufferIndex = 0;
+  JPEG_IN_Write_BufferIndex = 0;
+  Jpeg_IN_BufferTab[0].State = JPEG_BUFFER_FULL;
+  Jpeg_IN_BufferTab[1].State = JPEG_BUFFER_FULL;
+  Jpeg_OUT_BufferTab[0].State = JPEG_BUFFER_EMPTY;
+  Jpeg_OUT_BufferTab[1].State = JPEG_BUFFER_EMPTY;
+  Output_Full = 0;
+  Input_Empty = 0;
 
+  if (DataSize<=AVI_VIDEO_BUF_SIZE)
+  {
+	  Remain_Data_Length = 0;
+  }
+  else
+  {
+	  Remain_Data_Length = DataSize - AVI_VIDEO_BUF_SIZE;
+  }
+
+  if (DataSize>=AVI_VIDEO_BUF_SIZE)
+  {
+	  Jpeg_IN_BufferTab[0].DataLength=AVI_VIDEO_BUF_SIZE/2;
+	  Jpeg_IN_BufferTab[1].DataLength=AVI_VIDEO_BUF_SIZE/2;
+  }
+  else if (DataSize>(AVI_VIDEO_BUF_SIZE/2))
+  {
+	  Jpeg_IN_BufferTab[0].DataLength=AVI_VIDEO_BUF_SIZE/2;
+	  Jpeg_IN_BufferTab[1].DataLength=DataSize - AVI_VIDEO_BUF_SIZE/2;
+  }
+  else
+  {
+	  Jpeg_IN_BufferTab[0].DataLength = DataSize;
+	  Jpeg_IN_BufferTab[1].DataLength = 0;
+  }
+
+  HAL_JPEG_Decode_DMA(&JPEG_Handle , (uint8_t *)Jpeg_IN_BufferTab[0].DataBuffer ,Jpeg_IN_BufferTab[0].DataLength\
+		  ,(uint8_t *)Jpeg_OUT_BufferTab[JPEG_OUT_Write_BufferIndex].DataBuffer ,CHUNK_SIZE_OUT);
+  if(osSemaphoreWait(osVidSemph , time_out) == osErrorOS)
+  {
+	  HAL_JPEG_Abort(&JPEG_Handle);
+    return 1;
+  }
+  return 0;
+}
 /**
   * @brief  JPEG Data Ready callback
   * @param hjpeg: JPEG handle pointer
@@ -406,7 +520,7 @@ void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hjpeg, uint32_t NbDecodedData)
 					Jpeg_IN_BufferTab[JPEG_IN_Read_BufferIndex].DataLength);
 		}
 
-		osMessagePut(OutputEvent, JPEG_DATA_INPUT, 0);
+		osMessagePut(InputEvent, JPEG_DATA_INPUT, 0);
 	}
 	else
 	{

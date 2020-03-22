@@ -561,11 +561,11 @@ void HAL_SDRAM_MspDeInit(SDRAM_HandleTypeDef* hsdram){
   * @param hjpeg: JPEG handle pointer
   * @retval None
   */
-void HAL_JPEG_MspInit(JPEG_HandleTypeDef *hjpeg)
-{
-  /* Enable JPEG clock */
-  __HAL_RCC_JPEG_CLK_ENABLE();
-}
+//void HAL_JPEG_MspInit(JPEG_HandleTypeDef *hjpeg)
+//{
+//  /* Enable JPEG clock */
+//  __HAL_RCC_JPEG_CLK_ENABLE();
+//}
 
 /* USER CODE BEGIN 1 */
 /** @defgroup HAL_MSP_Private_Functions

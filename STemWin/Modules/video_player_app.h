@@ -63,7 +63,7 @@
 void          HW_JPEG_Init(void);
 U32           HW_JPEG_Draw (U32 DataSize);
 void          HW_JPEG_DeInit(void);
-
+U32 		  HW_JPEG_Draw_timeout (U32 DataSize, U32 time_out);
 
 //U32           AUDIO_Init(U8 volume, U32 frequency);
 //U32           AUDIO_Play(U8 *pData, U16 Size);

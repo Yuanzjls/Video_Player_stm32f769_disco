@@ -403,7 +403,7 @@ __weak void BSP_SD_MspInit(SD_HandleTypeDef *hsd, void *Params)
   dma_rx_handle.Init.PeriphInc           = DMA_PINC_DISABLE;
   dma_rx_handle.Init.MemInc              = DMA_MINC_ENABLE;
   dma_rx_handle.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
-  dma_rx_handle.Init.MemDataAlignment    = DMA_MDATAALIGN_WORD;
+  dma_rx_handle.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
   dma_rx_handle.Init.Mode                = DMA_PFCTRL;
   dma_rx_handle.Init.Priority            = DMA_PRIORITY_VERY_HIGH;
   dma_rx_handle.Init.FIFOMode            = DMA_FIFOMODE_ENABLE;
@@ -428,7 +428,7 @@ __weak void BSP_SD_MspInit(SD_HandleTypeDef *hsd, void *Params)
   dma_tx_handle.Init.PeriphInc           = DMA_PINC_DISABLE;
   dma_tx_handle.Init.MemInc              = DMA_MINC_ENABLE;
   dma_tx_handle.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
-  dma_tx_handle.Init.MemDataAlignment    = DMA_MDATAALIGN_WORD;
+  dma_tx_handle.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
   dma_tx_handle.Init.Mode                = DMA_PFCTRL;
   dma_tx_handle.Init.Priority            = DMA_PRIORITY_VERY_HIGH;
   dma_tx_handle.Init.FIFOMode            = DMA_FIFOMODE_ENABLE;

@@ -94,17 +94,9 @@ typedef enum {
 
 #define AVI_FORMAT_MJPG		        0x47504A4D 
 
-typedef GUI_HMEM GUI_AVI_HANDLE;
-typedef void GUI_AVI_FUNC(GUI_AVI_HANDLE havi, int Notification, U32 CurrentFrame);
 
-typedef void tHW_JPEG_Init(void);
-typedef void tHW_JPEG_DeInit(void);
-typedef U32 tHW_JPEG_Draw (const void * pFileData, U32 DataSize,U32 x0, U32 y0);
 
-typedef struct {
-  const    U8 * pFileData;
-  I32      FileSize;
-} GUI_AVI_PARAM;
+
 
 #if defined(__GNUC__)
 #define PACKED_STRUCT struct __packed
@@ -195,7 +187,7 @@ typedef struct
 
 typedef struct
 {
-	U32	 BmpSize;		
+	U32	     BmpSize;
  	U32      Width;			
 	U32      Height;			
 	U16      Planes;			
@@ -239,84 +231,22 @@ typedef struct
 }STRF_WAVHEADER;
 
 
-typedef struct {
-  AVI_INFO            aviInfo;       
-  U32                 CurrentImage;  
-  U32                 TimeNextFrame; 
-  int                 xPos, yPos;    
-  int                 DoLoop;        
-  GUI_GET_DATA_FUNC   * pfGetData;     
-  void                * pParam;  
-  const U8            * pVideoBuffer;  
-  U32                 VideoBufferSize;      
-  const U8            * pAudioBuffer;
-  U32                 AudioRdPtr; 
-  U32                 AudioWdPtr;     
-  U32                 AudioBufferSize;    
-  U32                 FileSize;        
-  GUI_AVI_FUNC        * pfNotify;        
-  GUI_TIMER_HANDLE    hTimer;        
-  U8                  SkipMode;
-  U8                  AudioSync;  
-  tHW_JPEG_Draw       * pfDraw;
-  
-  tHW_JPEG_Init       * pfJpegInit;
-  tHW_JPEG_Draw       * pfJpegDraw;
-  tHW_JPEG_DeInit     * pfJpegDeInit;
 
-} AVI_CONTEXT;
 
 #define	 MAKEWORD(ptr)	(U16)(((U16)*((U8*)(ptr))<<8)|(U16)*(U8*)((ptr)+1))
 #define  MAKEDWORD(ptr)	(U32)(((U16)*(U8*)(ptr)|(((U16)*(U8*)(ptr+1))<<8)|\
 						(((U16)*(U8*)(ptr+2))<<16)|(((U16)*(U8*)(ptr+3))<<24))) 
 
+extern AVI_INFO Avix;
+
+AVISTATUS _AVI_Init(U8 *buf, U16 size);
+U32 _AVI_SearchID(U8* buf,U32 size,U8 *id);
+AVISTATUS _Avi_Get_Streaminfo(U8* buf);
 
 
 
 
-/*********************************************************************
-*
-*       AVI callbacks ID
-*/
-#define GUI_AVI_JPEG_INIT             0 
-#define GUI_AVI_JPEG_DRAW             1 
-#define GUI_AVI_JPEG_DEINIT           2 
-/*********************************************************************
-*
-*       AVI file support
-*/
-#define GUI_AVI_NOTIFICATION_PREDRAW  0 /* Immediately before frame is drawn  */
-#define GUI_AVI_NOTIFICATION_POSTDRAW 1 /* Immediately after a frame is drawn */
-#define GUI_AVI_NOTIFICATION_START    2 /* Send when start playing a movie    */
-#define GUI_AVI_NOTIFICATION_STOP     3 /* avi has stopped                    */
-#define GUI_AVI_NOTIFICATION_DELETE   4 /* avi has been deleted               */
-#define GUI_AVI_NOTIFICATION_EOF      5 /* end of avi file                    */
 
-
-
-typedef struct {
-  int xSize;         /* X-size of images                                      */
-  int ySize;         /* Y-size of images                                      */
-  int msPerFrame;    /* Default duration of 1 frame                           */
-  U32 NumFrames;     /* Number of frames                                      */
-} GUI_AVI_INFO;
-
-
-
-GUI_AVI_HANDLE   GUI_AVI_Create       (GUI_AVI_FUNC * pfNotify);
-GUI_AVI_HANDLE   GUI_AVI_CreateEx     (GUI_GET_DATA_FUNC * pfGetData, GUI_AVI_FUNC * pfNotify) ;
-int              GUI_AVI_Start        (GUI_AVI_HANDLE havi, void * pParam, U32 FileSize);
-int              GUI_AVI_Stop         (GUI_AVI_HANDLE havi);
-int              GUI_AVI_Delete       (GUI_AVI_HANDLE havi);
-U32              GUI_AVI_GetFrameIndex(GUI_AVI_HANDLE havi);
-int              GUI_AVI_GetInfo      (GUI_AVI_HANDLE havi, GUI_AVI_INFO * pInfo);
-int              GUI_AVI_GotoFrame    (GUI_AVI_HANDLE havi, U32 Frame);
-int              GUI_AVI_Pause        (GUI_AVI_HANDLE havi);
-int              GUI_AVI_Play         (GUI_AVI_HANDLE havi);
-int              GUI_AVI_Show         (GUI_AVI_HANDLE havi, int xPos, int yPos, int DoLoop);
-void             GUI_AVI_SetDevFunc   (GUI_AVI_HANDLE havi, int IdFunc, void (* pDriverFunc)(void));
-int              GUI_AVI_SelectMode   (GUI_AVI_HANDLE havi, int Mode);
-void             GUI_AVI_SetBuffers   (GUI_AVI_HANDLE havi, U8 *pVidBuff, U16 VidBuffSize, U8 *pAudBuff, U16 AudBuffSize);
 #if defined(__cplusplus)
 }
 #endif
