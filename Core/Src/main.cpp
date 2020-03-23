@@ -435,7 +435,7 @@ void  vTaskGUI(void *pvParameters)
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
 
-		f_open(&fi, "/Avi/mv1.avi", FA_READ);
+		f_open(&fi, "/Avi/inuyasha.avi", FA_READ);
 		f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
 		avi_res = _AVI_Init(FrameBuffer, AVI_VIDEO_BUF_SIZE);
 		offset = _AVI_SearchID(FrameBuffer, AVI_VIDEO_BUF_SIZE, (U8*)"movi");
@@ -468,9 +468,9 @@ void  vTaskGUI(void *pvParameters)
 				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
 				if (Avix.StreamSize >0)
 				{
-					if ((osKernelSysTick()-last_time) <= (next_frame_time-5))
+					if ((osKernelSysTick()-last_time) <= (next_frame_time-60))
 					{
-						if (HW_JPEG_Draw_timeout(Avix.StreamSize, next_frame_time-(osKernelSysTick()-last_time)))
+						if (HW_JPEG_Draw_timeout(Avix.StreamSize, next_frame_time-(osKernelSysTick()-last_time)-55))
 						{
 //							HW_JPEG_DeInit();
 //							HW_JPEG_Init();
