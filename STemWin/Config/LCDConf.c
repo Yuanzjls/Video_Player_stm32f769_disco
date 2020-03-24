@@ -533,6 +533,12 @@ static void DMA2D_CopyBuffer(U32 LayerIndex, void * pSrc, void * pDst, U32 xSize
   U32 PixelFormat;
 
   PixelFormat = GetPixelformat(LayerIndex);
+
+  /* Wait until transfer is done */
+  while (DMA2D->CR & DMA2D_CR_START)
+  {
+  }
+
   DMA2D->CR      = 0x00000000UL | (1 << 9);
 
   /* Set up pointers */
@@ -548,11 +554,7 @@ static void DMA2D_CopyBuffer(U32 LayerIndex, void * pSrc, void * pDst, U32 xSize
   DMA2D->NLR     = (U32)(xSize << 16) | (U16)ySize;
   
   DMA2D->CR     |= DMA2D_CR_START;
-  
-  /* Wait until transfer is done */
-  while (DMA2D->CR & DMA2D_CR_START)
-  {
-  }
+
 }
 
 /*********************************************************************
@@ -564,6 +566,11 @@ static void DMA2D_CopyBufferWithAlpha(U32 LayerIndex, void * pSrc, void * pDst, 
   uint32_t PixelFormat;
 
   PixelFormat = GetPixelformat(LayerIndex);
+
+  /* Wait until transfer is done */
+  while (DMA2D->CR & DMA2D_CR_START)
+  {
+  }
   DMA2D->CR      = 0x00000000UL | (1 << 9) | (0x2 << 16);
 
   /* Set up pointers */
@@ -584,10 +591,7 @@ static void DMA2D_CopyBufferWithAlpha(U32 LayerIndex, void * pSrc, void * pDst, 
   
   DMA2D->CR     |= DMA2D_CR_START;
   
-  /* Wait until transfer is done */
-  while (DMA2D->CR & DMA2D_CR_START)
-  {
-  }
+
 }
 
 /**
@@ -607,6 +611,10 @@ static void DMA2D_FillBuffer(U32 LayerIndex, void * pDst, U32 xSize, U32 ySize, 
 
   PixelFormat = GetPixelformat(LayerIndex);
   
+  /* Wait until transfer is done */
+  while (DMA2D->CR & DMA2D_CR_START)
+  {
+  }
   /* Set up mode */
   DMA2D->CR      = 0x00030000UL | (1 << 9);
   DMA2D->OCOLR   = ColorIndex;
@@ -625,10 +633,7 @@ static void DMA2D_FillBuffer(U32 LayerIndex, void * pDst, U32 xSize, U32 ySize, 
   
   DMA2D->CR     |= DMA2D_CR_START;
   
-  /* Wait until transfer is done */
-  while (DMA2D->CR & DMA2D_CR_START)
-  {
-  }
+
 }
 
 
@@ -724,6 +729,11 @@ static void LCD_LL_FillRect(int LayerIndex, int x0, int y0, int x1, int y1, U32 
 */
 static void DMA2D_DrawBitmapL8(void * pSrc, void * pDst,  U32 OffSrc, U32 OffDst, U32 PixelFormatDst, U32 xSize, U32 ySize)
 {
+
+  /* Wait until transfer is done */
+  while (DMA2D->CR & DMA2D_CR_START)
+  {
+  }
   /* Set up mode */
   DMA2D->CR      = 0x00010000UL | (1 << 9);         /* Control Register (Memory to memory with pixel format conversion and TCIE) */
 
@@ -745,10 +755,7 @@ static void DMA2D_DrawBitmapL8(void * pSrc, void * pDst,  U32 OffSrc, U32 OffDst
   /* Execute operation */
   DMA2D->CR     |= DMA2D_CR_START;                               /* Start operation */
 
-  /* Wait until transfer is done */
-  while (DMA2D->CR & DMA2D_CR_START)
-  {
-  }
+
 }
 
 /**

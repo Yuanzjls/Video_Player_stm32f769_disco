@@ -213,10 +213,10 @@ void HW_JPEG_Init(void)
   InputEvent = osMessageCreate (osMessageQ(INPUT_Queue), NULL);
 
   /* Output Thread  definition */
-  osThreadDef(OUTPUT_THREAD, OutputThread, osPriorityRealtime, 0, configMINIMAL_STACK_SIZE);
+  osThreadDef(OUTPUT_THREAD, OutputThread, osPriorityBelowNormal , 0, configMINIMAL_STACK_SIZE);
   hOutputThread = osThreadCreate(osThread(OUTPUT_THREAD), NULL);
   
-	osThreadDef(INTPUT_THREAD, InputThread, osPriorityRealtime, 0, configMINIMAL_STACK_SIZE);
+	osThreadDef(INTPUT_THREAD, InputThread, osPriorityBelowNormal , 0, configMINIMAL_STACK_SIZE);
 	hInputThread = osThreadCreate(osThread(INTPUT_THREAD), NULL);
 
     /* Create the Semaphore used by the two threads */

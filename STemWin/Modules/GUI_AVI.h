@@ -239,9 +239,9 @@ typedef struct
 
 extern AVI_INFO Avix;
 
-AVISTATUS _AVI_Init(U8 *buf, U16 size);
+AVISTATUS _AVI_Init(AVI_INFO*, U8 *buf, U16 size);
 U32 _AVI_SearchID(U8* buf,U32 size,U8 *id);
-AVISTATUS _Avi_Get_Streaminfo(U8* buf);
+AVISTATUS _Avi_Get_Streaminfo(AVI_INFO*, U8* buf);
 
 
 

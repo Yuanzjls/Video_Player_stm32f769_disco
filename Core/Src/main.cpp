@@ -198,16 +198,18 @@ void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t
   * @retval int
   */
 uint32_t FrameOffset=0;
-const uint16_t block_size = 49152;
+const uint16_t block_size = 4096*6;
 uint16_t buff[block_size];
 uint8_t buff_audio[block_size*2];
 #define PLAY_HEADER          0x2C
 bool flag = 0;
-uint8_t temp_data[100];
+uint8_t temp_data[8];
+uint8_t waitfor_move=0;
 TaskHandle_t xTaskVolume = NULL;
 TaskHandle_t xTaskMusic = NULL;
 static TaskHandle_t xTaskGUI = NULL;
 static TaskHandle_t xTaskTouchEx = NULL;
+TaskHandle_t xTaskJpeg = NULL;
 static void vTaskVolume(void *pvParameters)
 {
   UBaseType_t  priority;
@@ -282,11 +284,13 @@ extern uint8_t Repeat_Status;
 #define Audio_BUFFER_EMPTY (0)
 #define Audio_BUFFER_FULL  (1)
 uint8_t state_audio[2];
+SemaphoreHandle_t xSem_audio;
 static void vTaskMusic(void *pvParameters)
 {
 
   uint32_t ulNotifiedValue;
-
+  volatile uint32_t realx = 0;
+  xSem_audio = xSemaphoreCreateBinary();
   while(1)
   {
 	  xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, osWaitForever );
@@ -300,7 +304,7 @@ static void vTaskMusic(void *pvParameters)
 			}
 			else
 			{
-				;
+				realx++;
 			}
 			state_audio[0] = Audio_BUFFER_EMPTY;
 		}
@@ -312,20 +316,32 @@ static void vTaskMusic(void *pvParameters)
 			}
 			else
 			{
-				;
+				realx++;
 			}
+
 			state_audio[1] = Audio_BUFFER_EMPTY;
+		}
+		if (waitfor_move)
+		{
+			xSemaphoreGive(xSem_audio);
 		}
 	  }
   }
-
-
-
 }
 
 uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
-
-
+uint32_t JPEG_Size;
+SemaphoreHandle_t xSem_jpeg;
+static void vTaskJpeg(void *pvParameters)
+{
+	xSem_jpeg = xSemaphoreCreateBinary();
+	while(1)
+	{
+		xSemaphoreTake(xSem_jpeg, osWaitForever);
+		HW_JPEG_Draw(JPEG_Size);
+		BSP_LED_Toggle(LED_RED);
+	}
+}
 int Get_data(uint8_t *buff, uint32_t Datalength)
 {
 	unsigned int length;
@@ -333,7 +349,8 @@ int Get_data(uint8_t *buff, uint32_t Datalength)
 	f_read(&fi, buff, Datalength, &length);
 	return length;
 }
-extern AVI_INFO Avix;
+AVI_INFO Avix;
+extern JPEG_HandleTypeDef    JPEG_Handle;
 void  vTaskGUI(void *pvParameters)
 {
 	unsigned int length;
@@ -342,99 +359,106 @@ void  vTaskGUI(void *pvParameters)
 	DIR dj;
 	volatile AVISTATUS avi_res;
 	HW_JPEG_Init();
-	uint32_t offset, last_time, current_frame, next_frame_time, frame_per_ms, audio_pr;
+	uint32_t offset, audio_pr;
 	uint8_t *buf_pr = (uint8_t*)buff_audio;
 
 
 	BSP_SD_Init();
+	HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
 
-		f_open(&fi, "/Avi/inuyasha.avi", FA_READ);
+		f_open(&fi, "/Avi/burnig.avi", FA_READ);
 		f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
-		avi_res = _AVI_Init(FrameBuffer, AVI_VIDEO_BUF_SIZE);
+		avi_res = _AVI_Init(&Avix, FrameBuffer, AVI_VIDEO_BUF_SIZE);
 		offset = _AVI_SearchID(FrameBuffer, AVI_VIDEO_BUF_SIZE, (U8*)"movi");
-		_Avi_Get_Streaminfo(FrameBuffer + offset + 4);
-		f_lseek(&fi, offset+12);
+		_Avi_Get_Streaminfo(&Avix, FrameBuffer + offset + 4);
 		Playback_Init(Avix.SampleRate);
-		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
-		current_frame=0;
-		frame_per_ms = Avix.SecPerFrame/1000;
-		next_frame_time = 0;
-		audio_pr = 0;
-		last_time = osKernelSysTick();
-		state_audio[0] = Audio_BUFFER_EMPTY;
-		state_audio[1] = Audio_BUFFER_EMPTY;
-		while(f_size(&fi)!=f_tell(&fi) && Avix.StreamSize<=AVI_VIDEO_BUF_SIZE)
+		while(1)
 		{
+			f_lseek(&fi, offset+12);
+			audio_pr = 0;
+			state_audio[0] = Audio_BUFFER_EMPTY;
+			state_audio[1] = Audio_BUFFER_EMPTY;
 
-			if (AVI_AUDS_FLAG==Avix.StreamID)
-			{
-				while ((state_audio[1] == Audio_BUFFER_FULL) && (state_audio[0]==Audio_BUFFER_FULL))
-				{
-					taskYIELD();
-				}
-
-				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
-				if (audio_pr+Avix.StreamSize>=(block_size<<1))
-				{
-					while (state_audio[0] == Audio_BUFFER_FULL)
-					{
-						taskYIELD();
-					}
-					memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, (block_size<<1)-audio_pr);
-					memcpy(buf_pr, (U8 *)FrameBuffer+((block_size<<1)-audio_pr), audio_pr+Avix.StreamSize-(block_size<<1));
-					audio_pr = audio_pr+Avix.StreamSize-(block_size<<1);
-					state_audio[1] = Audio_BUFFER_FULL;
-				}
-				else if ((audio_pr <= block_size) && (audio_pr+Avix.StreamSize) >= block_size)
-				{
-					while (state_audio[1] == Audio_BUFFER_FULL)
-					{
-						taskYIELD();
-					}
-					memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, Avix.StreamSize);
-					state_audio[0] = Audio_BUFFER_FULL;
-					audio_pr+=Avix.StreamSize;
-				}
-				else
-				{
-					memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, Avix.StreamSize);
-					audio_pr+=Avix.StreamSize;
-				}
-
-				_Avi_Get_Streaminfo(FrameBuffer + Avix.StreamSize);
-
-			}
-			else if (Avix.StreamID == AVI_VIDS_FLAG)
+			while(f_size(&fi)!=f_tell(&fi) && Avix.StreamSize<=AVI_VIDEO_BUF_SIZE)
 			{
 
-				if (Avix.StreamSize >0)
+				if (AVI_AUDS_FLAG==Avix.StreamID)
 				{
-					if ((osKernelSysTick()-last_time) <= (next_frame_time))
+					if (((state_audio[1] == Audio_BUFFER_FULL) && (state_audio[0]==Audio_BUFFER_FULL))||\
+							((audio_pr+Avix.StreamSize>=(block_size<<1)) && state_audio[0] == Audio_BUFFER_FULL)||\
+							(((audio_pr <= block_size) && (audio_pr+Avix.StreamSize) >= block_size) && state_audio[1] == Audio_BUFFER_FULL))
 					{
-						f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
-						if (HW_JPEG_Draw_timeout(Avix.StreamSize, next_frame_time-(osKernelSysTick()-last_time)))
+						waitfor_move = 1;
+						if (JPEG_Handle.State == HAL_JPEG_STATE_READY)
 						{
+							length++;
+						}
+						xSemaphoreTake(xSem_audio, osWaitForever);
+						waitfor_move = 0;
+					}
 
-						}
-						else
-						{
-							current_frame++;
-						}
-						BSP_LED_Toggle(LED_RED);
+
+					if (audio_pr+Avix.StreamSize>=(block_size<<1))
+					{
+	//					if (state_audio[0] == Audio_BUFFER_FULL)
+	//					{
+	//						waitfor_move = 1;
+	//						xSemaphoreTake(xSem_audio, osWaitForever);
+	//						waitfor_move = 0;
+	//					}
+						f_read(&fi, (U8 *)buf_pr+audio_pr, (block_size<<1)-audio_pr, &length);
+						f_read(&fi, (U8 *)buf_pr, audio_pr+Avix.StreamSize-(block_size<<1), &length);
+
+						audio_pr = audio_pr+Avix.StreamSize-(block_size<<1);
+						state_audio[1] = Audio_BUFFER_FULL;
+					}
+					else if ((audio_pr <= block_size) && (audio_pr+Avix.StreamSize) >= block_size)
+					{
+	//					if (state_audio[1] == Audio_BUFFER_FULL)
+	//					{
+	//						waitfor_move = 1;
+	//						xSemaphoreTake(xSem_audio, osWaitForever);
+	//						waitfor_move = 0;
+	//
+	//					}
+						f_read(&fi, (U8 *)buf_pr+audio_pr, Avix.StreamSize, &length);
+						state_audio[0] = Audio_BUFFER_FULL;
+						audio_pr+=Avix.StreamSize;
 					}
 					else
 					{
-						f_lseek(&fi, f_tell(&fi)+ Avix.StreamSize);
-						f_read(&fi, (U8 *)FrameBuffer+Avix.StreamSize, 8, &length);
+						f_read(&fi, (U8 *)buf_pr+audio_pr, Avix.StreamSize, &length);
+						audio_pr+=Avix.StreamSize;
 					}
-					next_frame_time += frame_per_ms;
+					f_read(&fi, (U8 *)temp_data, 8, &length);
+					_Avi_Get_Streaminfo(&Avix,temp_data);
+
+				}
+				else if (Avix.StreamID == AVI_VIDS_FLAG)
+				{
+
+					if (Avix.StreamSize >0)
+					{
+						if (JPEG_Handle.State == HAL_JPEG_STATE_READY)
+						{
+							f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize, &length);
+							JPEG_Size = Avix.StreamSize;
+							xSemaphoreGive(xSem_jpeg);
+						}
+						else
+						{
+							f_lseek(&fi, f_tell(&fi)+ Avix.StreamSize);
+
+						}
+
+					}
+					f_read(&fi, (U8 *)temp_data, 8, &length);
+					_Avi_Get_Streaminfo(&Avix, temp_data);
 				}
 
-				_Avi_Get_Streaminfo(FrameBuffer + Avix.StreamSize);
 			}
-
 		}
 		f_close(&fi);
 
@@ -451,9 +475,9 @@ static void AppTaskCreate(void)
 {
   //xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
   xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
-  xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 1, &xTaskGUI);
+  xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 2, &xTaskGUI);
   //xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
-
+  xTaskCreate(vTaskJpeg, "TaskJPEG", 2048, NULL, 3, &xTaskJpeg);
 
 }
 static void MPU_Config(void)

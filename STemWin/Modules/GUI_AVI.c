@@ -60,7 +60,7 @@
 /* Exported constants --------------------------------------------------------*/			
 U8* const AVI_VIDS_FLAG_TBL[2]={(U8 *)"00dc",(U8 *)"01dc"};
 U8* const AVI_AUDS_FLAG_TBL[2]={(U8 *)"00wb",(U8 *)"01wb"};
-AVI_INFO Avix; //avi information
+//AVI_INFO Avix; //avi information
 /* Private functions ---------------------------------------------------------*/
 
 /**
@@ -83,13 +83,13 @@ U32 _AVI_SearchID(U8* buf,U32 size,U8 *id)
   return 0;		
 }
 
-AVISTATUS _Avi_Get_Streaminfo(U8* buf)
+AVISTATUS _Avi_Get_Streaminfo(AVI_INFO *pavi, U8* buf)
 {
-	Avix.StreamID=MAKEWORD(buf+2);
-	Avix.StreamSize=MAKEDWORD(buf+4);
+	pavi->StreamID=MAKEWORD(buf+2);
+	pavi->StreamSize=MAKEDWORD(buf+4);
 
-	if(Avix.StreamSize%2)Avix.StreamSize++;
-	if(Avix.StreamID==AVI_VIDS_FLAG||Avix.StreamID==AVI_AUDS_FLAG)
+	if(pavi->StreamSize%2)pavi->StreamSize++;
+	if(pavi->StreamID==AVI_VIDS_FLAG||pavi->StreamID==AVI_AUDS_FLAG)
 	{
 		return AVI_OK;
 	}
@@ -132,7 +132,7 @@ AVISTATUS _Avi_Get_Streaminfo(U8* buf)
   * @param  size: AVI file size     
   * @retval AVI status
   */
-AVISTATUS _AVI_Init(U8 *buf, U16 size)
+AVISTATUS _AVI_Init(AVI_INFO *pavi, U8 *buf, U16 size)
 {
   U32 offset;
   U8 *tbuf;
@@ -171,8 +171,8 @@ AVISTATUS _AVI_Init(U8 *buf, U16 size)
   {
     return AVI_AVIH_ERR;
   }
-  Avix.SecPerFrame = avihheader->SecPerFrame;
-  Avix.TotalFrame = avihheader->TotalFrame;
+  pavi->SecPerFrame = avihheader->SecPerFrame;
+  pavi->TotalFrame = avihheader->TotalFrame;
   buf += avihheader->BlockSize+8;
   listheader = (LIST_HEADER*)(buf);
   if (listheader->ListID != AVI_LIST_ID)
@@ -194,22 +194,22 @@ AVISTATUS _AVI_Init(U8 *buf, U16 size)
     {
       return AVI_FORMAT_ERR;
     }
-    Avix.VideoFLAG = AVI_VIDS_FLAG_TBL[0];
-    Avix.AudioFLAG = AVI_AUDS_FLAG_TBL[1];
+    pavi->VideoFLAG = AVI_VIDS_FLAG_TBL[0];
+    pavi->AudioFLAG = AVI_AUDS_FLAG_TBL[1];
     bmpheader = (STRF_BMPHEADER*)(buf+12+(strhheader->BlockSize+8));
     if (bmpheader->BlockID!=AVI_STRF_ID)
     {
       return AVI_STRF_ERR;
     }
-    Avix.Width = bmpheader->bmiHeader.Width;
-    Avix.Height = bmpheader->bmiHeader.Height;
+    pavi->Width = bmpheader->bmiHeader.Width;
+    pavi->Height = bmpheader->bmiHeader.Height;
     buf += listheader->BlockSize + 8;
     listheader = (LIST_HEADER*)buf;
     if (listheader->ListID != AVI_LIST_ID)
     {
-      Avix.SampleRate = 0;
-      Avix.Channels = 0;
-      Avix.AudioType = 0;
+      pavi->SampleRate = 0;
+      pavi->Channels = 0;
+      pavi->AudioType = 0;
     }
     else
     {
@@ -227,23 +227,23 @@ AVISTATUS _AVI_Init(U8 *buf, U16 size)
       {
         return AVI_STRH_ERR;
       }
-      Avix.SampleRate = wavheader->SampleRate;
-      Avix.Channels = wavheader->Channels;
-      Avix.AudioType = wavheader->FormatTag;
+      pavi->SampleRate = wavheader->SampleRate;
+      pavi->Channels = wavheader->Channels;
+      pavi->AudioType = wavheader->FormatTag;
     }    
   } 
   else if (strhheader->StreamType==AVI_AUDS_STREAM)
   {
-    Avix.VideoFLAG = AVI_VIDS_FLAG_TBL[1];
-    Avix.AudioFLAG = AVI_AUDS_FLAG_TBL[0];
+    pavi->VideoFLAG = AVI_VIDS_FLAG_TBL[1];
+    pavi->AudioFLAG = AVI_AUDS_FLAG_TBL[0];
     wavheader = (STRF_WAVHEADER*)(buf+12+strhheader->BlockSize+8);
     if (wavheader->BlockID!=AVI_STRH_ID)
     {
       return AVI_STRF_ERR;
     }
-    Avix.SampleRate = wavheader->SampleRate;
-    Avix.Channels = wavheader->Channels;
-    Avix.AudioType = wavheader->FormatTag;
+    pavi->SampleRate = wavheader->SampleRate;
+    pavi->Channels = wavheader->Channels;
+    pavi->AudioType = wavheader->FormatTag;
     buf += listheader->BlockSize+8;
     listheader = (LIST_HEADER*)buf;
     if (listheader->ListID!=AVI_LIST_ID)
@@ -272,24 +272,24 @@ AVISTATUS _AVI_Init(U8 *buf, U16 size)
     {
       return AVI_FORMAT_ERR;
     }    
-    Avix.Width = bmpheader->bmiHeader.Width;
-    Avix.Height = bmpheader->bmiHeader.Height;
+    pavi->Width = bmpheader->bmiHeader.Width;
+    pavi->Height = bmpheader->bmiHeader.Height;
   }
   offset = _AVI_SearchID(tbuf, size, (U8*)"movi");
   if (offset==0) 
   {
     return AVI_MOVI_ERR;
   }
-  if (Avix.SampleRate)
+  if (pavi->SampleRate)
   {
     tbuf+=offset;
-    offset=_AVI_SearchID(tbuf, size, Avix.AudioFLAG);
+    offset=_AVI_SearchID(tbuf, size, pavi->AudioFLAG);
     if (offset == 0)
     {
       return AVI_STREAM_ERR;
     }
     tbuf+=offset+4;
-    Avix.AudioBufSize = *(U16*)(tbuf);
+    pavi->AudioBufSize = *(U16*)(tbuf);
   }
   return res;
 }
