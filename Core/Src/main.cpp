@@ -198,8 +198,9 @@ void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t
   * @retval int
   */
 uint32_t FrameOffset=0;
-const uint16_t block_size = 36864;
-uint16_t buff[block_size+4];
+const uint16_t block_size = 49152;
+uint16_t buff[block_size];
+uint8_t buff_audio[block_size*2];
 #define PLAY_HEADER          0x2C
 bool flag = 0;
 uint8_t temp_data[100];
@@ -278,134 +279,48 @@ FATFS fs;
 char filename[256];
 extern uint8_t Play_Status;
 extern uint8_t Repeat_Status;
+#define Audio_BUFFER_EMPTY (0)
+#define Audio_BUFFER_FULL  (1)
+uint8_t state_audio[2];
 static void vTaskMusic(void *pvParameters)
 {
-  FRESULT fr;
-  DIR dj;
-  FILINFO fno;
 
-  unsigned int length=0;
   uint32_t ulNotifiedValue;
 
-  WM_MESSAGE p;
-
-
-  if (f_mount(&fs,(char*)"",1) == FR_OK)
+  while(1)
   {
-	fr = f_findfirst(&dj, &fno, "/Music", "*.wav");
-	strcpy(filename, "/Music/");
-	strcpy(&filename[7], fno.fname);
-	if (fr == FR_OK && fno.fname[0])
-	{
-
-		f_open(&fi, filename, FA_READ);
-		f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
-		f_lseek(&fi, PLAY_HEADER);
-		f_read(&fi, buff, block_size*2, &length);
-
-		Total_AudioTime.total_second = (f_size(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
-		Total_AudioTime.second = Total_AudioTime.total_second % 60;
-		Total_AudioTime.minute = Total_AudioTime.total_second / 60;
-		Total_AudioTime.current_progress_insecond = 0;
-		Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
-		Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
-
-		sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
-						Total_AudioTime.minute, Total_AudioTime.second);
-		Playback_Init(Wheader.Samplerate);
-		xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, portMAX_DELAY);
-		HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
-		p.MsgId = WM_USER_UPDATEFILENAME;
-		p.Data.p = fno.fname;
-		p.hWin = xhWin;
-
-		WM_SendMessage(xhWin, &p);
-        while(1)
-        {
-          xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, 400 );
-          if (ulNotifiedValue)
-          {
-            if (ulNotifiedValue  & 0x01)
-            {
-              f_read(&fi, &buff[block_size/2], block_size, &length);
-            }   
-            if (ulNotifiedValue  & 0x02)
-            {
-              f_read(&fi, &buff[0], block_size, &length);
-            }
-            if (ulNotifiedValue & 0x04)
-            {
-            	f_lseek(&fi, PLAY_HEADER +
-            			Total_AudioTime.current_progress_insecond * 4
-						* Wheader.Samplerate);
-            	f_read(&fi, buff, block_size*2, &length);
-            	Total_AudioTime.current_progress_insecond = (f_tell(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
-            }
-            if (ulNotifiedValue  & 0x07)
-            {
-            	Total_AudioTime.current_progress_insecond = (f_tell(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
-				Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
-				Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
-            	sprintf(time_char, "%02d:%02d / %02d:%02d", Total_AudioTime.current_minute, Total_AudioTime.current_second,
-            							Total_AudioTime.minute, Total_AudioTime.second);
-            }
-            if (ulNotifiedValue & 0x08 )
-            {
-            	if (Play_Status == 1)
-            	{
-            		wm8994_Resume(AUDIO_I2C_ADDRESS);
-					HAL_SAI_DMAResume(&SaiHandle);
-            	}
-            	else
-            	{
-            		wm8994_Pause(AUDIO_I2C_ADDRESS);
-            		HAL_SAI_DMAPause(&SaiHandle);
-            	}
-            }
-            if ((f_tell(&fi) == f_size(&fi) && Repeat_Status == 0) || ulNotifiedValue & 0x10)
-            {
-            	fr = f_findnext(&dj, &fno);
-            	if (fr == FR_OK && fno.fname[0])
-            	{
-            		f_close(&fi);
-            		strcpy(&filename[7], fno.fname);
-            		f_open(&fi, filename, FA_READ);
-					f_read(&fi, (void *)&Wheader, sizeof(Wheader), &length);
-					f_lseek(&fi, PLAY_HEADER);
-					f_read(&fi, buff, block_size*2, &length);
-					Total_AudioTime.total_second = (f_size(&fi) - PLAY_HEADER) / 4 / Wheader.Samplerate;
-					Total_AudioTime.second = Total_AudioTime.total_second % 60;
-					Total_AudioTime.minute = Total_AudioTime.total_second / 60;
-					Total_AudioTime.current_progress_insecond = 0;
-					Total_AudioTime.current_minute = Total_AudioTime.current_progress_insecond / 60;
-					Total_AudioTime.current_second = Total_AudioTime.current_progress_insecond % 60;
-					WM_SendMessage(xhWin, &p);
-					wm8994_SetFrequency(AUDIO_I2C_ADDRESS, Wheader.Samplerate);
-            	}
-            	else
-            	{
-            		f_closedir(&dj);
-            		f_lseek(&fi, f_size(&fi));
-            		fr = f_findfirst(&dj, &fno, "/Music", "*.wav");
-            	}
-            }
-            if (f_tell(&fi) == f_size(&fi) && Repeat_Status == 1)
-            {
-            	f_lseek(&fi, PLAY_HEADER);
-            }
-            BSP_LED_Toggle(LED_RED);
-          }
-        }
-	}
-  }
-  else
-  {
-	  while(1)
+	  xTaskNotifyWait(0, 0xffffffff, &ulNotifiedValue, osWaitForever );
+	  if (ulNotifiedValue)
 	  {
-		  BSP_LED_Toggle(LED_RED);
-		  vTaskDelay(2000);
+		if (ulNotifiedValue  & 0x01)
+		{
+			if (state_audio[0] == Audio_BUFFER_FULL)
+			{
+				memcpy((U8*)buff, (U8 *)buff_audio, block_size);
+			}
+			else
+			{
+				;
+			}
+			state_audio[0] = Audio_BUFFER_EMPTY;
+		}
+		if (ulNotifiedValue  & 0x02)
+		{
+			if (state_audio[1] == Audio_BUFFER_FULL)
+			{
+				memcpy((U8*)&buff[block_size/2], (U8 *)(buff_audio+block_size), block_size);
+			}
+			else
+			{
+				;
+			}
+			state_audio[1] = Audio_BUFFER_EMPTY;
+		}
 	  }
   }
+
+
+
 }
 
 uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
@@ -428,7 +343,7 @@ void  vTaskGUI(void *pvParameters)
 	volatile AVISTATUS avi_res;
 	HW_JPEG_Init();
 	uint32_t offset, last_time, current_frame, next_frame_time, frame_per_ms, audio_pr;
-	uint8_t *buf_pr = (uint8_t*)buff;
+	uint8_t *buf_pr = (uint8_t*)buff_audio;
 
 
 	BSP_SD_Init();
@@ -448,38 +363,71 @@ void  vTaskGUI(void *pvParameters)
 		next_frame_time = 0;
 		audio_pr = 0;
 		last_time = osKernelSysTick();
+		state_audio[0] = Audio_BUFFER_EMPTY;
+		state_audio[1] = Audio_BUFFER_EMPTY;
 		while(f_size(&fi)!=f_tell(&fi) && Avix.StreamSize<=AVI_VIDEO_BUF_SIZE)
 		{
 
 			if (AVI_AUDS_FLAG==Avix.StreamID)
 			{
-				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
-				if (audio_pr+Avix.StreamSize>(block_size<<1))
+				while ((state_audio[1] == Audio_BUFFER_FULL) && (state_audio[0]==Audio_BUFFER_FULL))
 				{
-					audio_pr = 0;
+					taskYIELD();
 				}
-				memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, Avix.StreamSize);
-				audio_pr+=Avix.StreamSize;
+
+				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
+				if (audio_pr+Avix.StreamSize>=(block_size<<1))
+				{
+					while (state_audio[0] == Audio_BUFFER_FULL)
+					{
+						taskYIELD();
+					}
+					memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, (block_size<<1)-audio_pr);
+					memcpy(buf_pr, (U8 *)FrameBuffer+((block_size<<1)-audio_pr), audio_pr+Avix.StreamSize-(block_size<<1));
+					audio_pr = audio_pr+Avix.StreamSize-(block_size<<1);
+					state_audio[1] = Audio_BUFFER_FULL;
+				}
+				else if ((audio_pr <= block_size) && (audio_pr+Avix.StreamSize) >= block_size)
+				{
+					while (state_audio[1] == Audio_BUFFER_FULL)
+					{
+						taskYIELD();
+					}
+					memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, Avix.StreamSize);
+					state_audio[0] = Audio_BUFFER_FULL;
+					audio_pr+=Avix.StreamSize;
+				}
+				else
+				{
+					memcpy(buf_pr+audio_pr, (U8 *)FrameBuffer, Avix.StreamSize);
+					audio_pr+=Avix.StreamSize;
+				}
+
 				_Avi_Get_Streaminfo(FrameBuffer + Avix.StreamSize);
-				//vTaskDelay(20);
+
 			}
 			else if (Avix.StreamID == AVI_VIDS_FLAG)
 			{
-				f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
+
 				if (Avix.StreamSize >0)
 				{
-					if ((osKernelSysTick()-last_time) <= (next_frame_time-60))
+					if ((osKernelSysTick()-last_time) <= (next_frame_time))
 					{
-						if (HW_JPEG_Draw_timeout(Avix.StreamSize, next_frame_time-(osKernelSysTick()-last_time)-55))
+						f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize+8, &length);
+						if (HW_JPEG_Draw_timeout(Avix.StreamSize, next_frame_time-(osKernelSysTick()-last_time)))
 						{
-//							HW_JPEG_DeInit();
-//							HW_JPEG_Init();
+
 						}
 						else
 						{
 							current_frame++;
 						}
 						BSP_LED_Toggle(LED_RED);
+					}
+					else
+					{
+						f_lseek(&fi, f_tell(&fi)+ Avix.StreamSize);
+						f_read(&fi, (U8 *)FrameBuffer+Avix.StreamSize, 8, &length);
 					}
 					next_frame_time += frame_per_ms;
 				}
@@ -501,10 +449,10 @@ void  vTaskGUI(void *pvParameters)
 //higher number, higher priority
 static void AppTaskCreate(void)
 {
-  xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
-  //xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
+  //xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
+  xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
   xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 1, &xTaskGUI);
-  xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
+  //xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
 
 
 }
@@ -923,7 +871,7 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack()
 	//unsigned int len;
   /* Manage the remaining file size and new address offset: This function
      should be coded by user (its prototype is already declared in stm32f769i_discovery_audio.h) */
-	//f_read(&fi, &buff[block_size/2], block_size, &len);
+
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     /* Notify the task that the transmission is complete. */
@@ -939,7 +887,7 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack()
 
 void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai)
 {
-	//BSP_AUDIO_OUT_TransferComplete_CallBack();
+	BSP_AUDIO_OUT_TransferComplete_CallBack();
 }
 /**
   * @brief Tx Transfer Half completed callbacks
@@ -967,7 +915,7 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack()
 }
 void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai)
 {
-	//BSP_AUDIO_OUT_HalfTransfer_CallBack();
+	BSP_AUDIO_OUT_HalfTransfer_CallBack();
 }
 #ifdef  USE_FULL_ASSERT
 /**
