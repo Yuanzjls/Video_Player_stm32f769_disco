@@ -364,23 +364,25 @@ void  vTaskGUI(void *pvParameters)
 
 
 	BSP_SD_Init();
+	Playback_Init(44100);
 	HAL_SAI_Transmit_DMA(&SaiHandle, (uint8_t *)buff, block_size);
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
 
-		f_open(&fi, "/Avi/burnig.avi", FA_READ);
-		f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
-		avi_res = _AVI_Init(&Avix, FrameBuffer, AVI_VIDEO_BUF_SIZE);
-		offset = _AVI_SearchID(FrameBuffer, AVI_VIDEO_BUF_SIZE, (U8*)"movi");
-		_Avi_Get_Streaminfo(&Avix, FrameBuffer + offset + 4);
-		Playback_Init(Avix.SampleRate);
+		f_open(&fi, "/Avi/inuyasha.avi", FA_READ);
+
 		while(1)
 		{
+			f_read(&fi, (U8 *)FrameBuffer, AVI_VIDEO_BUF_SIZE, &length);
+			avi_res = _AVI_Init(&Avix, FrameBuffer, AVI_VIDEO_BUF_SIZE);
+			offset = _AVI_SearchID(FrameBuffer, AVI_VIDEO_BUF_SIZE, (U8*)"movi");
+			_Avi_Get_Streaminfo(&Avix, FrameBuffer + offset + 4);
+
 			f_lseek(&fi, offset+12);
 			audio_pr = 0;
 			state_audio[0] = Audio_BUFFER_EMPTY;
 			state_audio[1] = Audio_BUFFER_EMPTY;
-
+			wm8994_SetFrequency(AUDIO_I2C_ADDRESS, Avix.SampleRate);
 			while(f_size(&fi)!=f_tell(&fi) && Avix.StreamSize<=AVI_VIDEO_BUF_SIZE)
 			{
 
@@ -459,6 +461,7 @@ void  vTaskGUI(void *pvParameters)
 				}
 
 			}
+		f_lseek(&fi, 0);
 		}
 		f_close(&fi);
 
@@ -475,8 +478,8 @@ static void AppTaskCreate(void)
 {
   //xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
   xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
-  xTaskCreate(vTaskGUI, "TaskGUI", 10240, NULL, 2, &xTaskGUI);
-  //xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 2, &xTaskTouchEx);
+  xTaskCreate(vTaskGUI, "TaskGUI", 20240, NULL, 2, &xTaskGUI);
+  xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 1, &xTaskTouchEx);
   xTaskCreate(vTaskJpeg, "TaskJPEG", 2048, NULL, 3, &xTaskJpeg);
 
 }
