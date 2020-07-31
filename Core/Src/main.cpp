@@ -283,8 +283,11 @@ extern uint8_t Play_Status;
 extern uint8_t Repeat_Status;
 #define Audio_BUFFER_EMPTY (0)
 #define Audio_BUFFER_FULL  (1)
+
+enum JPEG_DATA_STATE{JPEG_DATA_IDEL, JPEG_DATA_READY, JPEG_DATA_PROCESSING};
 uint8_t state_audio[2];
 SemaphoreHandle_t xSem_audio;
+
 static void vTaskMusic(void *pvParameters)
 {
 
@@ -329,16 +332,40 @@ static void vTaskMusic(void *pvParameters)
   }
 }
 
-uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE];
-uint32_t JPEG_Size;
+uint8_t    FrameBuffer[AVI_VIDEO_BUF_SIZE], FrameBuffer2[AVI_VIDEO_BUF_SIZE];;
+uint32_t JPEG_Size[2];
 SemaphoreHandle_t xSem_jpeg;
+JPEG_DATA_STATE Data_State[2]={JPEG_DATA_IDEL, JPEG_DATA_IDEL};
+extern JPEG_HandleTypeDef    JPEG_Handle;
 static void vTaskJpeg(void *pvParameters)
 {
+
 	xSem_jpeg = xSemaphoreCreateBinary();
 	while(1)
 	{
-		xSemaphoreTake(xSem_jpeg, osWaitForever);
-		HW_JPEG_Draw(JPEG_Size);
+		if (JPEG_Handle.State == HAL_JPEG_STATE_READY)
+		{
+			if (Data_State[0] == JPEG_DATA_READY)
+			{
+				Data_State[0] = JPEG_DATA_PROCESSING;
+				HW_JPEG_Draw2(FrameBuffer, JPEG_Size[0]);
+				Data_State[0] = JPEG_DATA_IDEL;
+			}
+			else if (Data_State[1] == JPEG_DATA_READY)
+			{
+				Data_State[1] = JPEG_DATA_PROCESSING;
+				HW_JPEG_Draw2(FrameBuffer2, JPEG_Size[1]);
+				Data_State[1] = JPEG_DATA_IDEL;
+			}
+			else
+			{
+				xSemaphoreTake(xSem_jpeg, 1000);
+			}
+		}
+		else
+		{
+			xSemaphoreTake(xSem_jpeg, 1000);
+		}
 		BSP_LED_Toggle(LED_RED);
 	}
 }
@@ -350,7 +377,7 @@ int Get_data(uint8_t *buff, uint32_t Datalength)
 	return length;
 }
 AVI_INFO Avix;
-extern JPEG_HandleTypeDef    JPEG_Handle;
+
 void  vTaskGUI(void *pvParameters)
 {
 	unsigned int length;
@@ -369,7 +396,7 @@ void  vTaskGUI(void *pvParameters)
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
 
-		f_open(&fi, "/Avi/inuyasha.avi", FA_READ);
+		f_open(&fi, "/Avi/inuyasha1.avi", FA_READ);
 
 		while(1)
 		{
@@ -443,18 +470,24 @@ void  vTaskGUI(void *pvParameters)
 
 					if (Avix.StreamSize >0)
 					{
-						if (JPEG_Handle.State == HAL_JPEG_STATE_READY)
+						if (Data_State[0]==JPEG_DATA_IDEL)
 						{
 							f_read(&fi, (U8 *)FrameBuffer, Avix.StreamSize, &length);
-							JPEG_Size = Avix.StreamSize;
-							xSemaphoreGive(xSem_jpeg);
+							JPEG_Size[0] = Avix.StreamSize;
+							Data_State[0] = JPEG_DATA_READY;
+
+						}
+
+						else if (Data_State[1]==JPEG_DATA_IDEL)
+						{
+							f_read(&fi, (U8 *)FrameBuffer2, Avix.StreamSize, &length);
+							JPEG_Size[1] = Avix.StreamSize;
+							Data_State[1] = JPEG_DATA_READY;
 						}
 						else
 						{
 							f_lseek(&fi, f_tell(&fi)+ Avix.StreamSize);
-
 						}
-
 					}
 					f_read(&fi, (U8 *)temp_data, 8, &length);
 					_Avi_Get_Streaminfo(&Avix, temp_data);
@@ -478,9 +511,9 @@ static void AppTaskCreate(void)
 {
   //xTaskCreate(vTaskVolume, "TaskVolume", 512, NULL, 3, &xTaskVolume);
   xTaskCreate(vTaskMusic, "TaskMusic", 2048, NULL, 4, &xTaskMusic);
-  xTaskCreate(vTaskGUI, "TaskGUI", 20240, NULL, 2, &xTaskGUI);
+  xTaskCreate(vTaskGUI, "TaskGUI", 20240, NULL, 3, &xTaskGUI);
   xTaskCreate(vTaskTouchEx, "TaskTouchEx", 512, NULL, 1, &xTaskTouchEx);
-  xTaskCreate(vTaskJpeg, "TaskJPEG", 2048, NULL, 3, &xTaskJpeg);
+  xTaskCreate(vTaskJpeg, "TaskJPEG", 2048, NULL, 4, &xTaskJpeg);
 
 }
 static void MPU_Config(void)
