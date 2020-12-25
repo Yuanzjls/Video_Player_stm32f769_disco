@@ -396,7 +396,7 @@ void  vTaskGUI(void *pvParameters)
 	if (f_mount(&fs,(char*)"",1) == FR_OK)
 	{
 
-		f_open(&fi, "/Avi/inuyasha1.avi", FA_READ);
+		f_open(&fi, "/Avi/happy.avi", FA_READ);
 
 		while(1)
 		{
